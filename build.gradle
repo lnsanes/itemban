@@ -74,6 +74,49 @@ jar {
     }
 }
 
+// 1.16–1.20.1 Forge 运行时是 SRG。只跑 jar、不跑 reobfJar 会产出带 Commands.literal 的包，服务端启动即崩。
+afterEvaluate {
+    def reobf = tasks.findByName('reobfJar')
+    if (reobf != null) {
+        tasks.named('jar').configure { finalizedBy reobf }
+        tasks.named('assemble').configure { dependsOn reobf }
+        tasks.named('build').configure { dependsOn reobf }
+    }
+}
+
+tasks.register('verifyForgeReobf') {
+    dependsOn 'reobfJar'
+    doLast {
+        def built = layout.buildDirectory.file("libs/${project.archivesBaseName}-${project.version}.jar").get().asFile
+        def reobfOut = layout.buildDirectory.file('reobfJar/output.jar').get().asFile
+        if (reobfOut.exists()) {
+            built.bytes = reobfOut.bytes
+        }
+        if (!built.exists()) {
+            throw new GradleException("Missing output jar: ${built}")
+        }
+        def zip = new java.util.zip.ZipFile(built)
+        try {
+            def entry = zip.getEntry('com/itemban/CommandHandler.class')
+            if (entry == null) {
+                throw new GradleException("CommandHandler.class missing in ${built.name}")
+            }
+            def data = zip.getInputStream(entry).bytes
+            def text = new String(data, 'ISO-8859-1')
+            if (!text.contains('m_82127_')) {
+                throw new GradleException("ItemBan jar is NOT reobfuscated (CommandHandler missing Commands.m_82127_). Do not ship ${built.name}.")
+            }
+        } finally {
+            zip.close()
+        }
+        logger.lifecycle("verifyForgeReobf OK: ${built.name} CommandHandler uses SRG Commands.m_82127_")
+    }
+}
+
+tasks.named('build').configure {
+    finalizedBy 'verifyForgeReobf'
+}
+
 publishing {
     publications {
         mavenJava(MavenPublication) {

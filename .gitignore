@@ -2,6 +2,7 @@
 .gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
 
@@ -29,6 +30,12 @@ Thumbs.db
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+!dist/**/*.jar
+
+# Local / secrets
+_mcsm_output.txt
+_stage_github.py
 
 # Misc
 out/
