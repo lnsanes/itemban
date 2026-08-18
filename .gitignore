@@ -8,6 +8,7 @@ build/
 
 # Minecraft
 run/
+runs/
 logs/
 crash-reports/
 *.log

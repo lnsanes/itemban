@@ -1,0 +1,44 @@
+modLoader="javafml"
+loaderVersion="[36,)"
+license="Apache License 2.0"
+issueTrackerURL="https://github.com/yourname/itemban/issues"
+
+[[mods]]
+modId="itemban"
+version="${mod_version}"
+displayName="${mod_name}"
+displayURL="https://github.com/yourname/itemban"
+#logoFile="logo.png"
+authors="${mod_author}"
+description="${mod_description}"
+
+[[dependencies.itemban]]
+    modId="forge"
+    mandatory=true
+    versionRange="[36,)"
+    ordering="NONE"
+    side="BOTH"
+[[dependencies.itemban]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.16.5,1.17)"
+    ordering="NONE"
+    side="BOTH"
+[[dependencies.itemban]]
+    modId="ae2"
+    mandatory=false
+    versionRange="[15.0.0,)"
+    ordering="NONE"
+    side="BOTH"
+[[dependencies.itemban]]
+    modId="sophisticatedbackpacks"
+    mandatory=false
+    versionRange="[3.0.0,)"
+    ordering="NONE"
+    side="BOTH"
+[[dependencies.itemban]]
+    modId="create"
+    mandatory=false
+    versionRange="[0.5.1,)"
+    ordering="NONE"
+    side="BOTH"

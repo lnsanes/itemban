@@ -1,0 +1,1 @@
+Server-side Forge mod that blacklists items & blocks (with NBT), auto-removes them from inventories, containers, frames, drops & the world. Live commands, announcements, optional auto-ban, audit logs. Clients not required.

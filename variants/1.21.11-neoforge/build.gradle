@@ -1,0 +1,91 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        maven { url = 'https://maven.neoforged.net/releases' }
+    }
+    dependencies {
+        classpath "net.neoforged.gradle:userdev:${neogradle_version}"
+    }
+}
+
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+apply plugin: 'net.neoforged.gradle.userdev'
+
+group = project.group
+version = project.mod_version
+base.archivesName = "ItemBan-NeoForge-${project.mc}"
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation "net.neoforged:neoforge:${project.neo_version}"
+}
+
+runs {
+    configureEach { run ->
+        run.modSource sourceSets.main
+    }
+    client {
+        workingDirectory project.file('run/client')
+    }
+    server {
+        workingDirectory project.file('run/server')
+    }
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    inputs.property 'version', project.version
+    inputs.property 'mcversion', project.minecraft_version
+
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(
+            'mod_id'          : project.mod_id,
+            'mod_name'        : project.mod_name,
+            'mod_author'      : project.mod_author,
+            'mod_license'     : project.mod_license,
+            'mod_version'     : project.version,
+            'mod_description' : project.mod_description,
+            'minecraft_version_range': project.minecraft_version_range,
+            'neoforge_version_range' : project.neoforge_version_range
+        )
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'   : project.mod_id,
+            'Specification-Vendor'  : project.mod_author,
+            'Specification-Version' : '1',
+            'Implementation-Title'  : project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : project.mod_author,
+            'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifact jar
+        }
+    }
+    repositories {
+        maven { url "file://${project.projectDir}/repo" }
+    }
+}

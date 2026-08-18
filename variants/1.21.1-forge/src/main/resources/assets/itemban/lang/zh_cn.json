@@ -1,0 +1,5 @@
+{
+  "itemGroup.itemban": "ItemBan",
+  "commands.itemban.add.success": "已添加至黑名单: %s",
+  "commands.itemban.remove.success": "已从黑名单移除: %s"
+}

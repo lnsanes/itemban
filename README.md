@@ -17,7 +17,8 @@ A lightweight **server-side only** Minecraft mod that blacklists items: banned-i
 
 当前发布：
 
-- [v1.0.7](https://github.com/lnsanes/itemban/releases/tag/v1.0.7)（当前）
+- [v1.0.8](https://github.com/lnsanes/itemban/releases/tag/v1.0.8)（推荐）
+- [v1.0.7](https://github.com/lnsanes/itemban/releases/tag/v1.0.7)
 
 ## 支持版本
 

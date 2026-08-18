@@ -1,0 +1,74 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'eclipse'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[7.0.3,8)'
+}
+
+version = mod_version
+group = 'com.itemban'
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+// Forge scans every classpath dir that has mods.toml. Keep classes +
+// resources in one folder so runClient does not treat resources as a broken mod.
+sourceSets.main.output.resourcesDir = file("${layout.buildDirectory.get()}/classes/java/main")
+
+minecraft {
+    mappings channel: 'official', version: minecraft_version
+
+    runs {
+        configureEach {
+            workingDir = layout.projectDirectory.dir('run')
+            systemProperty 'eventbus.api.strictRuntimeChecks', 'true'
+        }
+        register('client')
+        register('server') {
+            args '--nogui'
+        }
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
+    annotationProcessor 'net.minecraftforge:eventbus-validator:7.0.5'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    inputs.property 'version', project.version
+    filesMatching('META-INF/mods.toml') {
+        expand 'mod_version': project.version,
+               'mod_name': project.mod_name,
+               'mod_author': project.mod_author,
+               'mod_description': project.mod_description
+    }
+}
+
+base {
+    archivesName = 'ItemBan'
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title': 'itemban',
+            'Specification-Vendor': 'itemban',
+            'Specification-Version': '1',
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'itemban'
+        ])
+    }
+}
