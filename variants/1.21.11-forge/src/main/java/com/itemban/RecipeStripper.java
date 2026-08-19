@@ -33,12 +33,13 @@ public final class RecipeStripper {
 
     @SubscribeEvent
     public static void onAddReloadListeners(AddReloadListenerEvent event) {
-        RecipeManager reloading = event.getServerResources().getRecipeManager();
         event.addListener((sharedState, backgroundExecutor, barrier, gameExecutor) ->
             barrier.wait(net.minecraft.util.Unit.INSTANCE).thenRunAsync(() -> {
                 MinecraftServer server = current;
                 if (server != null && serverLive) {
-                    recaptureAndApply(server, reloading);
+                    // 1.21.11+ 在 reload apply 阶段 item tag 尚未绑定，
+                    // 此时 finalizeRecipeLoading 会抛 unbound tag。延到下一 tick。
+                    scheduleRecapture(server);
                 }
             }, gameExecutor));
     }
@@ -105,7 +106,18 @@ public final class RecipeStripper {
         try {
             RECIPES_FIELD.set(manager, RecipeMap.create(keep));
             manager.finalizeRecipeLoading(enabledFeatures(server));
+            unboundRetries = 0;
         } catch (Throwable t) {
+            if (isUnboundTag(t)) {
+                if (unboundRetries++ < 8) {
+                    ItemBan.LOGGER.info("ItemBan: item tag 尚未绑定，延后写回配方表 ({})", unboundRetries);
+                    scheduleRecapture(server);
+                } else {
+                    unboundRetries = 0;
+                    ItemBan.LOGGER.error("ItemBan: 写回 RecipeManager 失败", t);
+                }
+                return 0;
+            }
             ItemBan.LOGGER.error("ItemBan: 写回 RecipeManager 失败", t);
             return 0;
         }
@@ -127,6 +139,36 @@ public final class RecipeStripper {
             }
         }
         return removedIds.size();
+    }
+
+    private static volatile int unboundRetries;
+
+    private static void scheduleRecapture(MinecraftServer server) {
+        Thread worker = new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            server.execute(() -> {
+                if (serverLive && current == server) {
+                    recaptureAndApply(server);
+                }
+            });
+        }, "itemban-recipe-reload");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private static boolean isUnboundTag(Throwable t) {
+        for (Throwable cur = t; cur != null; cur = cur.getCause()) {
+            String msg = cur.getMessage();
+            if (msg != null && msg.contains("unbound tag")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static net.minecraft.world.flag.FeatureFlagSet enabledFeatures(MinecraftServer server) {
