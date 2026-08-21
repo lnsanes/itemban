@@ -18,7 +18,9 @@ import net.minecraft.util.math.AxisAlignedBB;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.text.ChatType;
 import net.minecraft.util.text.StringTextComponent;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
+import net.minecraft.world.chunk.IChunk;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
@@ -32,7 +34,9 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -87,10 +91,46 @@ public class ItemBanHandler {
         int lastEnv = Integer.MIN_VALUE / 4;
     }
 
-    private record DropSnapshot(int entityId, ItemStack stack, String loc) {}
-    private record InvSnapshot(int slot, boolean carried, ItemStack stack) {}
-    private record FrameSnapshot(int entityId, ItemStack stack, String loc) {}
-    private record BlockSnapshot(BlockPos pos, String blockId, CompoundNBT nbt) {}
+    private static final class DropSnapshot {
+        final int entityId;
+        final ItemStack stack;
+        final String loc;
+        DropSnapshot(int entityId, ItemStack stack, String loc) {
+            this.entityId = entityId;
+            this.stack = stack;
+            this.loc = loc;
+        }
+    }
+    private static final class InvSnapshot {
+        final int slot;
+        final boolean carried;
+        final ItemStack stack;
+        InvSnapshot(int slot, boolean carried, ItemStack stack) {
+            this.slot = slot;
+            this.carried = carried;
+            this.stack = stack;
+        }
+    }
+    private static final class FrameSnapshot {
+        final int entityId;
+        final ItemStack stack;
+        final String loc;
+        FrameSnapshot(int entityId, ItemStack stack, String loc) {
+            this.entityId = entityId;
+            this.stack = stack;
+            this.loc = loc;
+        }
+    }
+    private static final class BlockSnapshot {
+        final BlockPos pos;
+        final String blockId;
+        final CompoundNBT nbt;
+        BlockSnapshot(BlockPos pos, String blockId, CompoundNBT nbt) {
+            this.pos = pos;
+            this.blockId = blockId;
+            this.nbt = nbt;
+        }
+    }
 
     private static ExecutorService newScanExecutor() {
         return Executors.newSingleThreadExecutor(r -> {
@@ -344,8 +384,8 @@ public class ItemBanHandler {
      */
     private static void logObtained(PlayerEntity player, ItemStack stack, String location, String source, boolean allowBan) {
         String itemId = ForgeRegistries.ITEMS.getKey(stack.getItem()).toString();
-        String loc = location == null || location.isBlank() ? formatEntityPos(player) : location;
-        String src = source == null || source.isBlank() ? "未知" : source;
+        String loc = location == null || location.trim().isEmpty() ? formatEntityPos(player) : location;
+        String src = source == null || source.trim().isEmpty() ? "未知" : source;
 
         // 如果物品在排除审计列表中，则不写入日志
         if (!ConfigHandler.isExcludedFromLog(itemId)) {
@@ -355,7 +395,7 @@ public class ItemBanHandler {
                 java.time.LocalDateTime.now(), player.getName().getString(),
                 itemId, stack.getCount(), src, loc);
             try {
-                Files.writeString(logFile, entry, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                Files.write(logFile, entry.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 ItemBan.LOGGER.error("日志写入失败", e);
             }
@@ -390,7 +430,7 @@ public class ItemBanHandler {
     }
 
     private static void detectLoadedMods() {
-        var modList = net.minecraftforge.fml.ModList.get();
+        net.minecraftforge.fml.ModList modList = net.minecraftforge.fml.ModList.get();
         hasSophisticatedBackpacks = modList.isLoaded("sophisticatedbackpacks");
         hasAE2 = modList.isLoaded("ae2");
         hasCreate = modList.isLoaded("create");
@@ -417,18 +457,18 @@ public class ItemBanHandler {
         }
         state.busy = true;
         switch (kind) {
-            case DROP -> {
+            case DROP:
                 state.lastDrop = player.tickCount;
                 startDroppedItemScan(player, state);
-            }
-            case INV -> {
+                break;
+            case INV:
                 state.lastInv = player.tickCount;
                 startInventoryScan(player, state);
-            }
-            case ENV -> {
+                break;
+            case ENV:
                 state.lastEnv = player.tickCount;
                 startEnvironmentScan(player, state);
-            }
+                break;
         }
     }
 
@@ -508,11 +548,11 @@ public class ItemBanHandler {
             return;
         }
         UUID playerId = player.getUUID();
-        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        List<ConfigHandler.BlacklistRule> rules = Collections.unmodifiableList(new ArrayList<ConfigHandler.BlacklistRule>(ConfigHandler.getBlacklistRules()));
         submitMatch(server, state, () -> {
             List<InvSnapshot> hits = new ArrayList<>();
             for (InvSnapshot shot : snapshots) {
-                if (matchesRules(shot.stack(), rules)) {
+                if (matchesRules(shot.stack, rules)) {
                     hits.add(shot);
                 }
             }
@@ -538,7 +578,7 @@ public class ItemBanHandler {
         ItemStack firstViolation = ItemStack.EMPTY;
         for (InvSnapshot hit : hits) {
             ItemStack live;
-            if (hit.carried()) {
+            if (hit.carried) {
                 live = player.inventory.getCarried();
                 if (live.isEmpty() || !isBlacklisted(live)) {
                     continue;
@@ -550,7 +590,7 @@ public class ItemBanHandler {
                 player.inventory.setCarried(ItemStack.EMPTY);
                 logObtained(player, removed, formatEntityPos(player), "背包", false);
             } else {
-                live = player.inventory.getItem(hit.slot());
+                live = player.inventory.getItem(hit.slot);
                 if (live.isEmpty() || !isBlacklisted(live)) {
                     continue;
                 }
@@ -558,7 +598,7 @@ public class ItemBanHandler {
                     firstViolation = live.copy();
                 }
                 ItemStack removed = live.copy();
-                player.inventory.setItem(hit.slot(), ItemStack.EMPTY);
+                player.inventory.setItem(hit.slot, ItemStack.EMPTY);
                 logObtained(player, removed, formatEntityPos(player), "背包", false);
             }
         }
@@ -580,10 +620,10 @@ public class ItemBanHandler {
             finishScan(state);
             return;
         }
-        var level = player.level;
+        World level = player.level;
         int centerChunkX = player.xChunk;
         int centerChunkZ = player.zChunk;
-        var aabb = new AxisAlignedBB(
+        AxisAlignedBB aabb = new AxisAlignedBB(
             (centerChunkX - 2) << 4, 0, (centerChunkZ - 2) << 4,
             ((centerChunkX + 2) << 4) + 16, 256, ((centerChunkZ + 2) << 4) + 16
         );
@@ -600,12 +640,12 @@ public class ItemBanHandler {
             return;
         }
 
-        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        List<ConfigHandler.BlacklistRule> rules = Collections.unmodifiableList(new ArrayList<ConfigHandler.BlacklistRule>(ConfigHandler.getBlacklistRules()));
         UUID playerId = player.getUUID();
         submitMatch(server, state, () -> {
             List<DropSnapshot> hits = new ArrayList<>();
             for (DropSnapshot shot : snapshots) {
-                if (matchesRules(shot.stack(), rules)) {
+                if (matchesRules(shot.stack, rules)) {
                     hits.add(shot);
                 }
             }
@@ -639,11 +679,15 @@ public class ItemBanHandler {
         if (player == null || player.hasDisconnected()) {
             return;
         }
-        var level = player.level;
+        World level = player.level;
         ItemStack firstViolation = ItemStack.EMPTY;
         for (DropSnapshot hit : hits) {
-            Entity entity = level.getEntity(hit.entityId());
-            if (!(entity instanceof ItemEntity itemEntity) || !itemEntity.isAlive()) {
+            Entity entity = level.getEntity(hit.entityId);
+            if (!(entity instanceof ItemEntity)) {
+                continue;
+            }
+            ItemEntity itemEntity = (ItemEntity) entity;
+            if (!itemEntity.isAlive()) {
                 continue;
             }
             ItemStack live = itemEntity.getItem();
@@ -655,7 +699,7 @@ public class ItemBanHandler {
             }
             ItemStack removed = live.copy();
             itemEntity.remove();
-            logObtained(player, removed, hit.loc(), "掉落物", false);
+            logObtained(player, removed, hit.loc, "掉落物", false);
         }
         if (!firstViolation.isEmpty()) {
             purgeInventoryItems(player, formatEntityPos(player), "掉落物联动清包", true);
@@ -673,11 +717,11 @@ public class ItemBanHandler {
             finishScan(state);
             return;
         }
-        var level = player.level;
+        World level = player.level;
         int centerChunkX = player.xChunk;
         int centerChunkZ = player.zChunk;
         int playerY = player.blockPosition().getY();
-        var aabb = new AxisAlignedBB(
+        AxisAlignedBB aabb = new AxisAlignedBB(
             (centerChunkX - 2) << 4, 0, (centerChunkZ - 2) << 4,
             ((centerChunkX + 2) << 4) + 16, 256, ((centerChunkZ + 2) << 4) + 16
         );
@@ -698,7 +742,7 @@ public class ItemBanHandler {
                 for (int dz = -2; dz <= 2; dz++) {
                     int chunkX = centerChunkX + dx;
                     int chunkZ = centerChunkZ + dz;
-                    var chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
+                    IChunk chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
                     if (chunk == null) {
                         continue;
                     }
@@ -716,7 +760,7 @@ public class ItemBanHandler {
                                     continue;
                                 }
                                 CompoundNBT blockNbt = null;
-                                var blockEntity = level.getBlockEntity(pos);
+                                TileEntity blockEntity = level.getBlockEntity(pos);
                                 if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(blockId)) {
                                     blockNbt = blockEntity.save(new CompoundNBT());
                                 }
@@ -733,19 +777,19 @@ public class ItemBanHandler {
             return;
         }
 
-        List<ConfigHandler.BlacklistRule> itemRules = List.copyOf(ConfigHandler.getBlacklistRules());
-        List<ConfigHandler.BlacklistRule> blockRules = List.copyOf(ConfigHandler.getBlockBlacklistRules());
+        List<ConfigHandler.BlacklistRule> itemRules = Collections.unmodifiableList(new ArrayList<ConfigHandler.BlacklistRule>(ConfigHandler.getBlacklistRules()));
+        List<ConfigHandler.BlacklistRule> blockRules = Collections.unmodifiableList(new ArrayList<ConfigHandler.BlacklistRule>(ConfigHandler.getBlockBlacklistRules()));
         UUID playerId = player.getUUID();
         submitMatch(server, state, () -> {
             List<FrameSnapshot> frameHits = new ArrayList<>();
             for (FrameSnapshot shot : frames) {
-                if (matchesRules(shot.stack(), itemRules)) {
+                if (matchesRules(shot.stack, itemRules)) {
                     frameHits.add(shot);
                 }
             }
             List<BlockSnapshot> blockHits = new ArrayList<>();
             for (BlockSnapshot shot : blocks) {
-                if (matchesBlockRules(shot.blockId(), shot.nbt(), blockRules)) {
+                if (matchesBlockRules(shot.blockId, shot.nbt, blockRules)) {
                     blockHits.add(shot);
                 }
             }
@@ -778,11 +822,15 @@ public class ItemBanHandler {
         if (player == null || player.hasDisconnected()) {
             return;
         }
-        var level = player.level;
+        World level = player.level;
         ItemStack firstItem = ItemStack.EMPTY;
         for (FrameSnapshot hit : frames) {
-            Entity entity = level.getEntity(hit.entityId());
-            if (!(entity instanceof ItemFrameEntity frame) || !frame.isAlive()) {
+            Entity entity = level.getEntity(hit.entityId);
+            if (!(entity instanceof ItemFrameEntity)) {
+                continue;
+            }
+            ItemFrameEntity frame = (ItemFrameEntity) entity;
+            if (!frame.isAlive()) {
                 continue;
             }
             ItemStack live = frame.getItem();
@@ -794,27 +842,27 @@ public class ItemBanHandler {
             }
             ItemStack removed = live.copy();
             frame.setItem(ItemStack.EMPTY);
-            logObtained(player, removed, hit.loc(), "展示框", false);
+            logObtained(player, removed, hit.loc, "展示框", false);
         }
         for (BlockSnapshot hit : blocks) {
-            BlockState liveState = level.getBlockState(hit.pos());
+            BlockState liveState = level.getBlockState(hit.pos);
             if (liveState.isAir()) {
                 continue;
             }
             String liveId = ForgeRegistries.BLOCKS.getKey(liveState.getBlock()).toString();
-            if (!hit.blockId().equals(liveId)) {
+            if (!hit.blockId.equals(liveId)) {
                 continue;
             }
             CompoundNBT liveNbt = null;
-            var blockEntity = level.getBlockEntity(hit.pos());
+            TileEntity blockEntity = level.getBlockEntity(hit.pos);
             if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(liveId)) {
                 liveNbt = blockEntity.save(new CompoundNBT());
             }
             if (!ConfigHandler.isBlockBlacklisted(liveId, liveNbt)) {
                 continue;
             }
-            level.setBlock(hit.pos(), Blocks.AIR.defaultBlockState(), 3);
-            logBlockViolation(player, liveId, liveNbt, formatPos(level, hit.pos()));
+            level.setBlock(hit.pos, Blocks.AIR.defaultBlockState(), 3);
+            logBlockViolation(player, liveId, liveNbt, formatPos(level, hit.pos));
             if (player.hasDisconnected()) {
                 return;
             }
@@ -829,7 +877,7 @@ public class ItemBanHandler {
      * 记录方块违禁事件（与 logObtained 逻辑一致，但消息不同）
      */
     private static void logBlockViolation(PlayerEntity player, String blockId, CompoundNBT nbt, String location) {
-        String loc = location == null || location.isBlank() ? formatEntityPos(player) : location;
+        String loc = location == null || location.trim().isEmpty() ? formatEntityPos(player) : location;
 
         // 如果物品在排除审计列表中，则不写入日志
         if (!ConfigHandler.isExcludedFromLog(blockId)) {
@@ -838,7 +886,7 @@ public class ItemBanHandler {
             String entry = String.format("[%s] 玩家 %s 破坏了黑名单方块 %s | 来源: 世界方块 | 坐标: %s\n",
                 java.time.LocalDateTime.now(), player.getName().getString(), blockId, loc);
             try {
-                Files.writeString(logFile, entry, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                Files.write(logFile, entry.getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (IOException e) {
                 ItemBan.LOGGER.error("日志写入失败", e);
             }
