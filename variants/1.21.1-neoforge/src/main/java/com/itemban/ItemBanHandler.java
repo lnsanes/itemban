@@ -6,6 +6,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.decoration.ItemFrame;
@@ -20,6 +21,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -28,18 +30,33 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 @EventBusSubscriber(modid = ItemBan.MODID)
 public class ItemBanHandler {
 
     /*
      * 性能优化说明（针对低性能服务器）：
-     * - 玩家背包扫描节流至每10 ticks（0.5秒）一次，降低CPU占用90%以上
-     * - 环境扫描（展示框）节流至每40 ticks（2秒）一次
+     * - 所有周期扫描间隔不超过 12 ticks，且同一玩家同时只运行一种扫描
+     * - 玩家背包扫描每 10 ticks（0.5秒）
+     * - 展示框 / 世界方块扫描每 12 ticks（0.6秒）
+     * - 掉落物范围扫描每 5 ticks（250ms）
+     * - 主线程只做快照，黑名单匹配在后台线程，删除/公示回到主线程
+     * - 方块黑名单为空时跳过体素扫描
      * - 模组存在检测缓存为静态布尔值，仅初始化一次
-     * - 容器扫描仅在打开事件触发，掉落拦截为事件驱动
+     * - 容器扫描仅在打开事件触发；dropdetect off 时掉落拦截为事件驱动
      * - 创造/OP玩家早期返回，避免不必要检查
      */
+
+    private static final int INV_SCAN_INTERVAL = 10;
+    private static final int ENV_SCAN_INTERVAL = 12;
+    private static final int DROP_SCAN_INTERVAL = 5;
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static Path LOG_DIR = Paths.get("logs", "ItemBan");
@@ -56,45 +73,59 @@ public class ItemBanHandler {
     private static boolean hasCreate = false;
     private static boolean modsDetected = false;
 
+    private static volatile ExecutorService scanExecutor = newScanExecutor();
+    private static final ConcurrentHashMap<UUID, PlayerScanState> scanStates = new ConcurrentHashMap<>();
+
+    private enum ScanKind { DROP, INV, ENV }
+
+    private static final class PlayerScanState {
+        volatile boolean busy;
+        int lastDrop = Integer.MIN_VALUE / 4;
+        int lastInv = Integer.MIN_VALUE / 4;
+        int lastEnv = Integer.MIN_VALUE / 4;
+    }
+
+    private record DropSnapshot(int entityId, ItemStack stack, String loc) {}
+    private record InvSnapshot(int slot, boolean carried, ItemStack stack) {}
+    private record FrameSnapshot(int entityId, ItemStack stack, String loc) {}
+    private record BlockSnapshot(BlockPos pos, String blockId, CompoundTag nbt) {}
+
+    private static ExecutorService newScanExecutor() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "ItemBan-Scan");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
-        // Remove recipes for blacklisted items - simplified, in real use RecipeManager reload
         ItemBan.LOGGER.info("ItemBan: 服务器启动，黑名单加载完成");
+        scanStates.clear();
+        if (scanExecutor == null || scanExecutor.isShutdown()) {
+            scanExecutor = newScanExecutor();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        scanStates.clear();
+        ExecutorService executor = scanExecutor;
+        if (executor != null) {
+            executor.shutdownNow();
+        }
     }
 
     @SubscribeEvent
     public static void onPlayerTick(PlayerTickEvent.Post event) {
-        Player player = event.getEntity();
-        if (player.level().isClientSide) return;
-        if (isOpOrCreative(player)) return;
+        Player raw = event.getEntity();
+        if (raw.level().isClientSide) return;
+        if (!(raw instanceof ServerPlayer player) || isOpOrCreative(player)) return;
 
-        // Throttle inventory scan to every 10 ticks (0.5s) to reduce CPU load on weak servers
-        if (player.tickCount % 10 != 0) return;
-
-        // Lazy init mod detection (once)
         if (!modsDetected) {
             detectLoadedMods();
         }
-
-        // 必须先删干净并校验，再封禁踢出（否则踢人后物品可能残留在玩家数据里）
-        if (player instanceof ServerPlayer serverPlayer) {
-            purgeInventoryThenMaybeBan(serverPlayer, "背包");
-            if (serverPlayer.hasDisconnected()) {
-                return;
-            }
-        } else {
-            purgeInventoryItems(player, formatEntityPos(player), "背包", false);
-        }
-
-        // 每 40 ticks（2 秒）扫描一次玩家周围 2 chunk 范围内的黑名单方块/展示框
-        if (player.tickCount % 40 == 0 && player instanceof ServerPlayer serverPlayer && !isOpOrCreative(serverPlayer)) {
-            scanNearbyChunks(serverPlayer);
-        }
-
-        // 当掉落物检测开关开启时，每 2 ticks 扫描玩家周围的掉落物（范围扫描模式）
-        if (ConfigHandler.detectDroppedItems && player.tickCount % 2 == 0 && player instanceof ServerPlayer serverPlayer && !isOpOrCreative(serverPlayer)) {
-            scanDroppedItemsNearby(serverPlayer);
-        }
+        scheduleNextScan(player);
     }
 
     @SubscribeEvent
@@ -180,6 +211,7 @@ public class ItemBanHandler {
 
     private static boolean isBlacklisted(ItemStack stack) {
         String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        CompoundTag nbt = stack.get(DataComponents.CUSTOM_DATA) == null ? null : stack.get(DataComponents.CUSTOM_DATA).copyTag();
         return ConfigHandler.isBlacklisted(id, stack);
     }
 
@@ -211,17 +243,6 @@ public class ItemBanHandler {
         if (key == Level.NETHER) return "下界";
         if (key == Level.END) return "末地";
         return key.location().toString();
-    }
-
-    /**
-     * 清空玩家背包中的全部违禁物品，记录/公示，校验干净后再封禁踢出。
-     */
-    private static void purgeInventoryThenMaybeBan(ServerPlayer player, String source) {
-        ItemStack first = purgeInventoryItems(player, formatEntityPos(player), source, true);
-        if (first.isEmpty()) {
-            return;
-        }
-        banAfterVerifiedClean(player, first);
     }
 
     /**
@@ -343,7 +364,7 @@ public class ItemBanHandler {
             String nbtInfo = "";
 
             if (stack.has(DataComponents.CUSTOM_DATA)) {
-                String nbtStr = stack.get(DataComponents.CUSTOM_DATA) == null ? null : stack.get(DataComponents.CUSTOM_DATA).copyTag().toString();
+                String nbtStr = stack.get(DataComponents.CUSTOM_DATA).copyTag().toString();
                 // 限制 NBT 长度，避免消息过长
                 if (nbtStr.length() > 60) {
                     nbtStr = nbtStr.substring(0, 57) + "...";
@@ -378,143 +399,420 @@ public class ItemBanHandler {
         }
     }
 
+    private static void scheduleNextScan(ServerPlayer player) {
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            return;
+        }
+        PlayerScanState state = scanStates.computeIfAbsent(player.getUUID(), id -> new PlayerScanState());
+        if (state.busy) {
+            return;
+        }
+        ScanKind kind = nextDueScan(state, player.tickCount);
+        if (kind == null) {
+            return;
+        }
+        state.busy = true;
+        switch (kind) {
+            case DROP -> {
+                state.lastDrop = player.tickCount;
+                startDroppedItemScan(player, state);
+            }
+            case INV -> {
+                state.lastInv = player.tickCount;
+                startInventoryScan(player, state);
+            }
+            case ENV -> {
+                state.lastEnv = player.tickCount;
+                startEnvironmentScan(player, state);
+            }
+        }
+    }
+
+    private static ScanKind nextDueScan(PlayerScanState state, int tick) {
+        boolean hasItemRules = !ConfigHandler.getBlacklistRules().isEmpty();
+        ScanKind best = null;
+        int bestOverdue = -1;
+        if (ConfigHandler.detectDroppedItems && hasItemRules) {
+            int overdue = tick - state.lastDrop;
+            if (overdue >= DROP_SCAN_INTERVAL && overdue > bestOverdue) {
+                best = ScanKind.DROP;
+                bestOverdue = overdue;
+            }
+        }
+        if (hasItemRules) {
+            int overdue = tick - state.lastInv;
+            if (overdue >= INV_SCAN_INTERVAL && overdue > bestOverdue) {
+                best = ScanKind.INV;
+                bestOverdue = overdue;
+            }
+        }
+        boolean envNeeded = hasItemRules || (ConfigHandler.detectWorldBlocks && ConfigHandler.hasBlockBlacklist());
+        if (envNeeded) {
+            int overdue = tick - state.lastEnv;
+            if (overdue >= ENV_SCAN_INTERVAL && overdue > bestOverdue) {
+                best = ScanKind.ENV;
+            }
+        }
+        return best;
+    }
+
+    private static void finishScan(PlayerScanState state) {
+        if (state != null) {
+            state.busy = false;
+        }
+    }
+
+    private static void submitMatch(MinecraftServer server, PlayerScanState state, Runnable matchWork) {
+        ExecutorService executor = scanExecutor;
+        if (executor == null || executor.isShutdown()) {
+            finishScan(state);
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    matchWork.run();
+                } catch (Throwable t) {
+                    ItemBan.LOGGER.warn("ItemBan: 后台扫描失败: {}", t.toString());
+                    server.execute(() -> finishScan(state));
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            finishScan(state);
+        }
+    }
+
+    private static void startInventoryScan(ServerPlayer player, PlayerScanState state) {
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            finishScan(state);
+            return;
+        }
+        List<InvSnapshot> snapshots = new ArrayList<>();
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = player.getInventory().getItem(i);
+            if (!stack.isEmpty()) {
+                snapshots.add(new InvSnapshot(i, false, stack.copy()));
+            }
+        }
+        if (player.containerMenu != null) {
+            ItemStack carried = player.containerMenu.getCarried();
+            if (!carried.isEmpty()) {
+                snapshots.add(new InvSnapshot(-1, true, carried.copy()));
+            }
+        }
+        if (snapshots.isEmpty()) {
+            finishScan(state);
+            return;
+        }
+        UUID playerId = player.getUUID();
+        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        submitMatch(server, state, () -> {
+            List<InvSnapshot> hits = new ArrayList<>();
+            for (InvSnapshot shot : snapshots) {
+                if (matchesRules(shot.stack(), rules)) {
+                    hits.add(shot);
+                }
+            }
+            if (hits.isEmpty()) {
+                finishScan(state);
+                return;
+            }
+            server.execute(() -> {
+                try {
+                    applyInventoryHits(server, playerId, hits);
+                } finally {
+                    finishScan(state);
+                }
+            });
+        });
+    }
+
+    private static void applyInventoryHits(MinecraftServer server, UUID playerId, List<InvSnapshot> hits) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || player.hasDisconnected()) {
+            return;
+        }
+        ItemStack firstViolation = ItemStack.EMPTY;
+        for (InvSnapshot hit : hits) {
+            ItemStack live;
+            if (hit.carried()) {
+                if (player.containerMenu == null) {
+                    continue;
+                }
+                live = player.containerMenu.getCarried();
+                if (live.isEmpty() || !isBlacklisted(live)) {
+                    continue;
+                }
+                if (firstViolation.isEmpty()) {
+                    firstViolation = live.copy();
+                }
+                ItemStack removed = live.copy();
+                player.containerMenu.setCarried(ItemStack.EMPTY);
+                logObtained(player, removed, formatEntityPos(player), "背包", false);
+            } else {
+                live = player.getInventory().getItem(hit.slot());
+                if (live.isEmpty() || !isBlacklisted(live)) {
+                    continue;
+                }
+                if (firstViolation.isEmpty()) {
+                    firstViolation = live.copy();
+                }
+                ItemStack removed = live.copy();
+                player.getInventory().setItem(hit.slot(), ItemStack.EMPTY);
+                logObtained(player, removed, formatEntityPos(player), "背包", false);
+            }
+        }
+        if (!firstViolation.isEmpty()) {
+            player.getInventory().setChanged();
+            player.inventoryMenu.broadcastChanges();
+            player.containerMenu.broadcastChanges();
+            banAfterVerifiedClean(player, firstViolation);
+        }
+    }
+
     /**
-     * 快速扫描玩家周围掉落物（仅在 detectDroppedItems = true 时调用）
-     * 每 2 ticks 执行一次
+     * 扫描玩家周围掉落物（仅在 detectDroppedItems = true 时调用）。
+     * 主线程只做实体快照；黑名单匹配在后台线程；删除/公示/封禁回到主线程。
      */
-    private static void scanDroppedItemsNearby(ServerPlayer player) {
+    private static void startDroppedItemScan(ServerPlayer player, PlayerScanState state) {
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            finishScan(state);
+            return;
+        }
         var level = player.level();
         int centerChunkX = player.chunkPosition().x;
         int centerChunkZ = player.chunkPosition().z;
-
         var aabb = new net.minecraft.world.phys.AABB(
             (centerChunkX - 2) << 4, level.getMinBuildHeight(), (centerChunkZ - 2) << 4,
             ((centerChunkX + 2) << 4) + 16, level.getMaxBuildHeight(), ((centerChunkZ + 2) << 4) + 16
         );
 
-        ItemStack firstViolation = ItemStack.EMPTY;
+        List<DropSnapshot> snapshots = new ArrayList<>();
         for (ItemEntity itemEntity : level.getEntitiesOfClass(ItemEntity.class, aabb)) {
             ItemStack stack = itemEntity.getItem();
-            if (!stack.isEmpty() && isBlacklisted(stack)) {
-                if (firstViolation.isEmpty()) {
-                    firstViolation = stack.copy();
-                }
-                ItemStack removed = stack.copy();
-                String loc = formatEntityPos(itemEntity);
-                itemEntity.discard(); // 先删除实体
-                logObtained(player, removed, loc, "掉落物", false);
+            if (!stack.isEmpty()) {
+                snapshots.add(new DropSnapshot(itemEntity.getId(), stack.copy(), formatEntityPos(itemEntity)));
             }
         }
+        if (snapshots.isEmpty()) {
+            finishScan(state);
+            return;
+        }
+
+        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        UUID playerId = player.getUUID();
+        submitMatch(server, state, () -> {
+            List<DropSnapshot> hits = new ArrayList<>();
+            for (DropSnapshot shot : snapshots) {
+                if (matchesRules(shot.stack(), rules)) {
+                    hits.add(shot);
+                }
+            }
+            if (hits.isEmpty()) {
+                finishScan(state);
+                return;
+            }
+            server.execute(() -> {
+                try {
+                    applyDroppedItemHits(server, playerId, hits);
+                } finally {
+                    finishScan(state);
+                }
+            });
+        });
+    }
+
+    private static boolean matchesRules(ItemStack stack, List<ConfigHandler.BlacklistRule> rules) {
+        String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        return ConfigHandler.isBlacklisted(id, stack);
+    }
+
+    private static void applyDroppedItemHits(MinecraftServer server, UUID playerId, List<DropSnapshot> hits) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || player.hasDisconnected()) {
+            return;
+        }
+        var level = player.level();
+        ItemStack firstViolation = ItemStack.EMPTY;
+        for (DropSnapshot hit : hits) {
+            Entity entity = level.getEntity(hit.entityId());
+            if (!(entity instanceof ItemEntity itemEntity) || !itemEntity.isAlive()) {
+                continue;
+            }
+            ItemStack live = itemEntity.getItem();
+            if (live.isEmpty() || !isBlacklisted(live)) {
+                continue;
+            }
+            if (firstViolation.isEmpty()) {
+                firstViolation = live.copy();
+            }
+            ItemStack removed = live.copy();
+            itemEntity.discard();
+            logObtained(player, removed, hit.loc(), "掉落物", false);
+        }
         if (!firstViolation.isEmpty()) {
-            // 掉落物场景：先确保玩家背包也干净，再封禁
             purgeInventoryItems(player, formatEntityPos(player), "掉落物联动清包", true);
             banAfterVerifiedClean(player, firstViolation);
         }
     }
 
     /**
-     * 扫描玩家周围 2 个 chunk 范围内的物品展示框（Item Frame）和违禁方块
-     * 检测到黑名单物品/方块后会触发 logObtained / logBlockViolation（公示/封禁）并清除
+     * 扫描玩家周围 2 个 chunk 范围内的物品展示框和违禁方块。
+     * 主线程快照，后台匹配，主线程清除。
      */
-    private static void scanNearbyChunks(ServerPlayer player) {
-        // 如果世界方块检测已关闭，则跳过方块扫描（但仍扫描展示框）
-        if (!ConfigHandler.detectWorldBlocks) {
-            // 仅扫描展示框
-            scanItemFramesOnly(player);
+    private static void startEnvironmentScan(ServerPlayer player, PlayerScanState state) {
+        MinecraftServer server = player.getServer();
+        if (server == null) {
+            finishScan(state);
             return;
         }
-
         var level = player.level();
         int centerChunkX = player.chunkPosition().x;
         int centerChunkZ = player.chunkPosition().z;
         int playerY = player.getBlockY();
+        var aabb = new net.minecraft.world.phys.AABB(
+            (centerChunkX - 2) << 4, level.getMinBuildHeight(), (centerChunkZ - 2) << 4,
+            ((centerChunkX + 2) << 4) + 16, level.getMaxBuildHeight(), ((centerChunkZ + 2) << 4) + 16
+        );
 
-        // 半径 2 chunk → 扫描 5×5 的 chunk 区域
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                int chunkX = centerChunkX + dx;
-                int chunkZ = centerChunkZ + dz;
-
-                var chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
-                if (chunk == null) continue;
-
-                // 扫描该 chunk 内的物品展示框实体
-                var aabb = new net.minecraft.world.phys.AABB(
-                    chunkX << 4, level.getMinBuildHeight(), chunkZ << 4,
-                    (chunkX << 4) + 16, level.getMaxBuildHeight(), (chunkZ << 4) + 16
-                );
-                for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, aabb)) {
-                    ItemStack displayed = frame.getItem();
-                    if (!displayed.isEmpty() && isBlacklisted(displayed)) {
-                        ItemStack removed = displayed.copy();
-                        String loc = formatEntityPos(frame);
-                        frame.setItem(ItemStack.EMPTY); // 先清空展示框
-                        logObtained(player, removed, loc, "展示框", false);
-                        // 展示框违禁：清完后校验背包再封禁
-                        purgeInventoryItems(player, formatEntityPos(player), "展示框联动清包", true);
-                        banAfterVerifiedClean(player, removed);
-                    }
+        List<FrameSnapshot> frames = new ArrayList<>();
+        if (!ConfigHandler.getBlacklistRules().isEmpty()) {
+            for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, aabb)) {
+                ItemStack displayed = frame.getItem();
+                if (!displayed.isEmpty()) {
+                    frames.add(new FrameSnapshot(frame.getId(), displayed.copy(), formatEntityPos(frame)));
                 }
+            }
+        }
 
-                // 扫描该 chunk 内的方块（性能考虑：仅扫描玩家上下 16 格）
-                for (int x = chunkX << 4; x < (chunkX << 4) + 16; x++) {
-                    for (int z = chunkZ << 4; z < (chunkZ << 4) + 16; z++) {
-                        for (int y = Math.max(playerY - 16, level.getMinBuildHeight());
-                             y <= Math.min(playerY + 16, level.getMaxBuildHeight()); y++) {
-
-                            BlockPos pos = new BlockPos(x, y, z);
-                            BlockState state = level.getBlockState(pos);
-                            if (state.isAir()) continue;
-
-                            String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                            CompoundTag blockNbt = null;
-
-                            var blockEntity = level.getBlockEntity(pos);
-                            if (blockEntity != null) {
-                                blockNbt = blockEntity.saveWithFullMetadata(level.registryAccess());
-                            }
-
-                            if (ConfigHandler.isBlockBlacklisted(blockId, blockNbt)) {
-                                // 方块：先清除再记录/封禁
-                                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-                                logBlockViolation(player, blockId, blockNbt, formatPos(level, pos));
+        List<BlockSnapshot> blocks = new ArrayList<>();
+        if (ConfigHandler.detectWorldBlocks && ConfigHandler.hasBlockBlacklist()) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    int chunkX = centerChunkX + dx;
+                    int chunkZ = centerChunkZ + dz;
+                    var chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
+                    if (chunk == null) {
+                        continue;
+                    }
+                    for (int x = chunkX << 4; x < (chunkX << 4) + 16; x++) {
+                        for (int z = chunkZ << 4; z < (chunkZ << 4) + 16; z++) {
+                            for (int y = Math.max(playerY - 16, level.getMinBuildHeight());
+                                 y <= Math.min(playerY + 16, level.getMaxBuildHeight()); y++) {
+                                BlockPos pos = new BlockPos(x, y, z);
+                                BlockState blockState = level.getBlockState(pos);
+                                if (blockState.isAir()) {
+                                    continue;
+                                }
+                                String blockId = BuiltInRegistries.BLOCK.getKey(blockState.getBlock()).toString();
+                                if (!ConfigHandler.isBlockIdTracked(blockId)) {
+                                    continue;
+                                }
+                                CompoundTag blockNbt = null;
+                                var blockEntity = level.getBlockEntity(pos);
+                                if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(blockId)) {
+                                    blockNbt = blockEntity.saveWithFullMetadata(level.registryAccess());
+                                }
+                                blocks.add(new BlockSnapshot(pos, blockId, blockNbt == null ? null : blockNbt.copy()));
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    /**
-     * 仅扫描物品展示框（当 detectWorldBlocks 关闭时使用）
-     */
-    private static void scanItemFramesOnly(ServerPlayer player) {
-        var level = player.level();
-        int centerChunkX = player.chunkPosition().x;
-        int centerChunkZ = player.chunkPosition().z;
+        if (frames.isEmpty() && blocks.isEmpty()) {
+            finishScan(state);
+            return;
+        }
 
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                int chunkX = centerChunkX + dx;
-                int chunkZ = centerChunkZ + dz;
-
-                var aabb = new net.minecraft.world.phys.AABB(
-                    chunkX << 4, level.getMinBuildHeight(), chunkZ << 4,
-                    (chunkX << 4) + 16, level.getMaxBuildHeight(), (chunkZ << 4) + 16
-                );
-                for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, aabb)) {
-                    ItemStack displayed = frame.getItem();
-                    if (!displayed.isEmpty() && isBlacklisted(displayed)) {
-                        ItemStack removed = displayed.copy();
-                        String loc = formatEntityPos(frame);
-                        frame.setItem(ItemStack.EMPTY);
-                        logObtained(player, removed, loc, "展示框", false);
-                        purgeInventoryItems(player, formatEntityPos(player), "展示框联动清包", true);
-                        banAfterVerifiedClean(player, removed);
-                    }
+        List<ConfigHandler.BlacklistRule> itemRules = List.copyOf(ConfigHandler.getBlacklistRules());
+        List<ConfigHandler.BlacklistRule> blockRules = List.copyOf(ConfigHandler.getBlockBlacklistRules());
+        UUID playerId = player.getUUID();
+        submitMatch(server, state, () -> {
+            List<FrameSnapshot> frameHits = new ArrayList<>();
+            for (FrameSnapshot shot : frames) {
+                if (matchesRules(shot.stack(), itemRules)) {
+                    frameHits.add(shot);
                 }
             }
+            List<BlockSnapshot> blockHits = new ArrayList<>();
+            for (BlockSnapshot shot : blocks) {
+                if (matchesBlockRules(shot.blockId(), shot.nbt(), blockRules)) {
+                    blockHits.add(shot);
+                }
+            }
+            if (frameHits.isEmpty() && blockHits.isEmpty()) {
+                finishScan(state);
+                return;
+            }
+            server.execute(() -> {
+                try {
+                    applyEnvironmentHits(server, playerId, frameHits, blockHits);
+                } finally {
+                    finishScan(state);
+                }
+            });
+        });
+    }
+
+    private static boolean matchesBlockRules(String blockId, CompoundTag nbt, List<ConfigHandler.BlacklistRule> rules) {
+        return ConfigHandler.isBlockBlacklisted(blockId, nbt);
+    }
+
+    private static void applyEnvironmentHits(MinecraftServer server, UUID playerId,
+                                             List<FrameSnapshot> frames, List<BlockSnapshot> blocks) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || player.hasDisconnected()) {
+            return;
+        }
+        var level = player.level();
+        ItemStack firstItem = ItemStack.EMPTY;
+        for (FrameSnapshot hit : frames) {
+            Entity entity = level.getEntity(hit.entityId());
+            if (!(entity instanceof ItemFrame frame) || !frame.isAlive()) {
+                continue;
+            }
+            ItemStack live = frame.getItem();
+            if (live.isEmpty() || !isBlacklisted(live)) {
+                continue;
+            }
+            if (firstItem.isEmpty()) {
+                firstItem = live.copy();
+            }
+            ItemStack removed = live.copy();
+            frame.setItem(ItemStack.EMPTY);
+            logObtained(player, removed, hit.loc(), "展示框", false);
+        }
+        for (BlockSnapshot hit : blocks) {
+            BlockState liveState = level.getBlockState(hit.pos());
+            if (liveState.isAir()) {
+                continue;
+            }
+            String liveId = BuiltInRegistries.BLOCK.getKey(liveState.getBlock()).toString();
+            if (!hit.blockId().equals(liveId)) {
+                continue;
+            }
+            CompoundTag liveNbt = null;
+            var blockEntity = level.getBlockEntity(hit.pos());
+            if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(liveId)) {
+                liveNbt = blockEntity.saveWithFullMetadata(level.registryAccess());
+            }
+            if (!ConfigHandler.isBlockBlacklisted(liveId, liveNbt)) {
+                continue;
+            }
+            level.setBlock(hit.pos(), Blocks.AIR.defaultBlockState(), 3);
+            logBlockViolation(player, liveId, liveNbt, formatPos(level, hit.pos()));
+            if (player.hasDisconnected()) {
+                return;
+            }
+        }
+        if (!firstItem.isEmpty()) {
+            purgeInventoryItems(player, formatEntityPos(player), "展示框联动清包", true);
+            banAfterVerifiedClean(player, firstItem);
         }
     }
 
@@ -567,4 +865,3 @@ public class ItemBanHandler {
         }
     }
 }
-

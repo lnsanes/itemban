@@ -245,6 +245,35 @@ public class ConfigHandler {
         return false;
     }
 
+
+    public static boolean hasBlockBlacklist() {
+        return !blockBlacklistRules.isEmpty();
+    }
+
+    public static boolean isBlockIdTracked(String blockId) {
+        for (BlacklistRule rule : blockBlacklistRules) {
+            if (rule.id != null && rule.id.equals(blockId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean blockIdNeedsNbt(String blockId) {
+        for (BlacklistRule rule : blockBlacklistRules) {
+            if (rule.id == null || !rule.id.equals(blockId)) {
+                continue;
+            }
+            if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                return true;
+            }
+            if (rule.nbt != null && !rule.nbt.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean isBlockBlacklisted(String blockId) {
         return blockBlacklistRules.stream().anyMatch(r -> r.matchesId(blockId) && (r.nbtString == null || r.nbtString.isEmpty()) && (r.nbt == null || r.nbt.isEmpty()));
     }

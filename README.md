@@ -17,8 +17,7 @@ A lightweight **server-side only** Minecraft mod that blacklists items: banned-i
 
 当前发布：
 
-- [v1.0.8](https://github.com/lnsanes/itemban/releases/tag/v1.0.8)（推荐）
-- [v1.0.7](https://github.com/lnsanes/itemban/releases/tag/v1.0.7)
+- [v2.0.0](https://github.com/lnsanes/itemban/releases/tag/v2.0.0)（全平台）
 
 ## 支持版本
 
@@ -32,7 +31,7 @@ A lightweight **server-side only** Minecraft mod that blacklists items: banned-i
 | 1.21.11 | Forge / NeoForge | `ItemBan-x.x.x-1.21.11-Forge.jar` / `...-NeoForge.jar` |
 | 26.1.2 | Forge / NeoForge | `ItemBan-x.x.x-26.1.2-Forge.jar` / `...-NeoForge.jar` |
 
-仓库根目录是 **Minecraft 1.20.1 Forge** 的源码。其它游戏版本 / 加载器的 1.0.8 源码在 [`variants/`](variants/)。已编译的 jar 也在 [`dist/`](dist/)。
+仓库根目录是 **Minecraft 1.20.1 Forge** 的源码（2.0.0）。其它游戏版本 / 加载器在 [`variants/`](variants/)。已编译的 jar 在 [`dist/`](dist/)。
 
 ## 功能
 
