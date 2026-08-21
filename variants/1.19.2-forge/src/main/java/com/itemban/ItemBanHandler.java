@@ -16,6 +16,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -47,7 +48,6 @@ public class ItemBanHandler {
      * - 掉落物范围扫描每 5 ticks（250ms）
      * - 主线程只做快照，黑名单匹配在后台线程，删除/公示回到主线程
      * - 方块黑名单为空时跳过体素扫描
-     * - 模组存在检测缓存为静态布尔值，仅初始化一次
      * - 容器扫描仅在打开事件触发；dropdetect off 时掉落拦截为事件驱动
      * - 创造/OP玩家早期返回，避免不必要检查
      */
@@ -65,10 +65,6 @@ public class ItemBanHandler {
         } catch (IOException ignored) {}
     }
 
-    // Cached mod detection flags (initialized once for performance)
-    private static boolean hasSophisticatedBackpacks = false;
-    private static boolean hasAE2 = false;
-    private static boolean hasCreate = false;
     private static boolean modsDetected = false;
 
     private static volatile ExecutorService scanExecutor = newScanExecutor();
@@ -387,15 +383,11 @@ public class ItemBanHandler {
 
     private static void detectLoadedMods() {
         var modList = net.minecraftforge.fml.ModList.get();
-        hasSophisticatedBackpacks = modList.isLoaded("sophisticatedbackpacks");
-        hasAE2 = modList.isLoaded("ae2");
-        hasCreate = modList.isLoaded("create");
         modsDetected = true;
-
-        if (hasSophisticatedBackpacks || hasAE2 || hasCreate) {
-            ItemBan.LOGGER.info("ItemBan: 检测到存储模组 - 精妙背包:{}, AE2:{}, Create:{}", 
-                hasSophisticatedBackpacks, hasAE2, hasCreate);
-        }
+        ItemBan.LOGGER.info("ItemBan: 检测到存储模组 - 精妙背包:{}, AE2:{}, Create:{}",
+            modList.isLoaded("sophisticatedbackpacks"),
+            modList.isLoaded("ae2"),
+            modList.isLoaded("create"));
     }
 
     private static void scheduleNextScan(ServerPlayer player) {
@@ -429,7 +421,7 @@ public class ItemBanHandler {
     }
 
     private static ScanKind nextDueScan(PlayerScanState state, int tick) {
-        boolean hasItemRules = !ConfigHandler.getBlacklistRules().isEmpty();
+        boolean hasItemRules = ConfigHandler.hasItemBlacklist();
         ScanKind best = null;
         int bestOverdue = -1;
         if (ConfigHandler.detectDroppedItems && hasItemRules) {
@@ -506,7 +498,7 @@ public class ItemBanHandler {
             return;
         }
         UUID playerId = player.getUUID();
-        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        List<ConfigHandler.BlacklistRule> rules = ConfigHandler.getBlacklistRules();
         submitMatch(server, state, () -> {
             List<InvSnapshot> hits = new ArrayList<>();
             for (InvSnapshot shot : snapshots) {
@@ -601,7 +593,7 @@ public class ItemBanHandler {
             return;
         }
 
-        List<ConfigHandler.BlacklistRule> rules = List.copyOf(ConfigHandler.getBlacklistRules());
+        List<ConfigHandler.BlacklistRule> rules = ConfigHandler.getBlacklistRules();
         UUID playerId = player.getUUID();
         submitMatch(server, state, () -> {
             List<DropSnapshot> hits = new ArrayList<>();
@@ -684,7 +676,7 @@ public class ItemBanHandler {
         );
 
         List<FrameSnapshot> frames = new ArrayList<>();
-        if (!ConfigHandler.getBlacklistRules().isEmpty()) {
+        if (ConfigHandler.hasItemBlacklist()) {
             for (ItemFrame frame : level.getEntitiesOfClass(ItemFrame.class, aabb)) {
                 ItemStack displayed = frame.getItem();
                 if (!displayed.isEmpty()) {
@@ -695,6 +687,10 @@ public class ItemBanHandler {
 
         List<BlockSnapshot> blocks = new ArrayList<>();
         if (ConfigHandler.detectWorldBlocks && ConfigHandler.hasBlockBlacklist()) {
+            BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+            int minY = Math.max(playerY - 16, level.getMinBuildHeight());
+            int maxY = Math.min(playerY + 16, level.getMaxBuildHeight() - 1);
+            int minBuild = level.getMinBuildHeight();
             for (int dx = -2; dx <= 2; dx++) {
                 for (int dz = -2; dz <= 2; dz++) {
                     int chunkX = centerChunkX + dx;
@@ -703,25 +699,36 @@ public class ItemBanHandler {
                     if (chunk == null) {
                         continue;
                     }
-                    for (int x = chunkX << 4; x < (chunkX << 4) + 16; x++) {
-                        for (int z = chunkZ << 4; z < (chunkZ << 4) + 16; z++) {
-                            for (int y = Math.max(playerY - 16, level.getMinBuildHeight());
-                                 y <= Math.min(playerY + 16, level.getMaxBuildHeight()); y++) {
-                                BlockPos pos = new BlockPos(x, y, z);
-                                BlockState blockState = level.getBlockState(pos);
-                                if (blockState.isAir()) {
-                                    continue;
+                    int minSection = chunk.getSectionIndex(minY);
+                    int maxSection = chunk.getSectionIndex(maxY);
+                    for (int sec = minSection; sec <= maxSection; sec++) {
+                        LevelChunkSection section = chunk.getSection(sec);
+                        if (section.hasOnlyAir()) {
+                            continue;
+                        }
+                        int baseY = minBuild + (sec << 4);
+                        int yStart = Math.max(minY, baseY);
+                        int yEnd = Math.min(maxY, baseY + 15);
+                        int originX = chunkX << 4;
+                        int originZ = chunkZ << 4;
+                        for (int x = originX; x < originX + 16; x++) {
+                            for (int z = originZ; z < originZ + 16; z++) {
+                                for (int y = yStart; y <= yEnd; y++) {
+                                    BlockState blockState = chunk.getBlockState(cursor.set(x, y, z));
+                                    if (blockState.isAir()) {
+                                        continue;
+                                    }
+                                    if (!ConfigHandler.isTrackedBlock(blockState.getBlock())) {
+                                        continue;
+                                    }
+                                    String blockId = blockState.getBlock().builtInRegistryHolder().key().location().toString();
+                                    CompoundTag blockNbt = null;
+                                    var blockEntity = level.getBlockEntity(cursor);
+                                    if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(blockId)) {
+                                        blockNbt = blockEntity.saveWithFullMetadata();
+                                    }
+                                    blocks.add(new BlockSnapshot(cursor.immutable(), blockId, blockNbt == null ? null : blockNbt.copy()));
                                 }
-                                String blockId = blockState.getBlock().builtInRegistryHolder().key().location().toString();
-                                if (!ConfigHandler.isBlockIdTracked(blockId)) {
-                                    continue;
-                                }
-                                CompoundTag blockNbt = null;
-                                var blockEntity = level.getBlockEntity(pos);
-                                if (blockEntity != null && ConfigHandler.blockIdNeedsNbt(blockId)) {
-                                    blockNbt = blockEntity.saveWithFullMetadata();
-                                }
-                                blocks.add(new BlockSnapshot(pos, blockId, blockNbt == null ? null : blockNbt.copy()));
                             }
                         }
                     }
@@ -734,8 +741,8 @@ public class ItemBanHandler {
             return;
         }
 
-        List<ConfigHandler.BlacklistRule> itemRules = List.copyOf(ConfigHandler.getBlacklistRules());
-        List<ConfigHandler.BlacklistRule> blockRules = List.copyOf(ConfigHandler.getBlockBlacklistRules());
+        List<ConfigHandler.BlacklistRule> itemRules = ConfigHandler.getBlacklistRules();
+        List<ConfigHandler.BlacklistRule> blockRules = ConfigHandler.getBlockBlacklistRules();
         UUID playerId = player.getUUID();
         submitMatch(server, state, () -> {
             List<FrameSnapshot> frameHits = new ArrayList<>();

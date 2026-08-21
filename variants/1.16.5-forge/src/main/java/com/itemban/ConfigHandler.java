@@ -3,12 +3,16 @@ package com.itemban;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import net.minecraft.block.Block;
+import net.minecraft.block.Blocks;
 import net.minecraft.nbt.CompoundNBT;
 import net.minecraft.nbt.INBT;
 import net.minecraft.nbt.JsonToNBT;
 import net.minecraft.nbt.ListNBT;
 import net.minecraft.nbt.StringNBT;
+import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.fml.loading.FMLPaths;
+import net.minecraftforge.registries.ForgeRegistries;
 
 import java.io.IOException;
 import java.lang.reflect.Type;
@@ -30,8 +34,14 @@ public class ConfigHandler {
     private static final Path BLOCK_BLACKLIST_FILE = CONFIG_DIR.resolve("block_blacklist.json");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.json");
 
-    private static List<BlacklistRule> blacklistRules = new ArrayList<BlacklistRule>();
-    private static List<BlacklistRule> blockBlacklistRules = new ArrayList<BlacklistRule>();
+    private static final List<BlacklistRule> blacklistRules = new ArrayList<BlacklistRule>();
+    private static final List<BlacklistRule> blockBlacklistRules = new ArrayList<BlacklistRule>();
+    private static List<BlacklistRule> itemRulesSnapshot = Collections.emptyList();
+    private static List<BlacklistRule> blockRulesSnapshot = Collections.emptyList();
+    private static Set<String> blockIdsNeedingNbt = Collections.emptySet();
+    private static Set<Block> trackedBlocks = Collections.emptySet();
+    private static volatile boolean itemRulesPresent = false;
+    private static volatile boolean blockRulesPresent = false;
 
     public static boolean publicAnnounce = true;
     public static boolean autoBanOnViolation = false;
@@ -43,31 +53,13 @@ public class ConfigHandler {
         public String id;
         public Map<String, Object> nbt;
         public String nbtString;
+        transient CompoundNBT parsedNbt;
 
         public boolean matches(String itemId, CompoundNBT itemNbt) {
-            if (!id.equals(itemId)) return false;
-
-            if (nbtString != null && !nbtString.isEmpty()) {
-                if (itemNbt == null || itemNbt.isEmpty()) return false;
-                try {
-                    CompoundNBT required = JsonToNBT.parseTag(nbtString);
-                    return nbtContains(itemNbt, required);
-                } catch (Exception e) {
-                    ItemBan.LOGGER.error("NBT 解析失败: {}", nbtString);
-                    return false;
-                }
-            }
-
-            if (nbt == null || nbt.isEmpty()) return true;
+            if (id == null || !id.equals(itemId)) return false;
+            if (parsedNbt == null || parsedNbt.isEmpty()) return true;
             if (itemNbt == null || itemNbt.isEmpty()) return false;
-
-            try {
-                CompoundNBT required = mapToCompoundTag(nbt);
-                return nbtContains(itemNbt, required);
-            } catch (Exception e) {
-                ItemBan.LOGGER.error("NBT 匹配失败: {}", e.getMessage());
-                return false;
-            }
+            return nbtContains(itemNbt, parsedNbt);
         }
 
         public boolean equalsRule(String itemId, String nbtString) {
@@ -149,6 +141,58 @@ public class ConfigHandler {
             }
         }
         return true;
+    }
+
+    private static void compileRuleNbt(BlacklistRule rule) {
+        rule.parsedNbt = null;
+        try {
+            if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                rule.parsedNbt = JsonToNBT.parseTag(rule.nbtString);
+            } else if (rule.nbt != null && !rule.nbt.isEmpty()) {
+                rule.parsedNbt = mapToCompoundTag(rule.nbt);
+            }
+        } catch (Exception e) {
+            ItemBan.LOGGER.error("NBT 预解析失败: {}", rule.nbtString != null ? rule.nbtString : e.getMessage());
+            rule.parsedNbt = null;
+        }
+    }
+
+    private static void rebuildIndexes() {
+        for (BlacklistRule rule : blacklistRules) {
+            compileRuleNbt(rule);
+        }
+        for (BlacklistRule rule : blockBlacklistRules) {
+            compileRuleNbt(rule);
+        }
+        itemRulesSnapshot = Collections.unmodifiableList(new ArrayList<BlacklistRule>(blacklistRules));
+        blockRulesSnapshot = Collections.unmodifiableList(new ArrayList<BlacklistRule>(blockBlacklistRules));
+        itemRulesPresent = !blacklistRules.isEmpty();
+        blockRulesPresent = !blockBlacklistRules.isEmpty();
+
+        Set<String> nbtIds = new HashSet<String>();
+        Set<Block> blocks = new HashSet<Block>();
+        for (BlacklistRule rule : blockBlacklistRules) {
+            if (rule.id == null) {
+                continue;
+            }
+            if (rule.parsedNbt != null && !rule.parsedNbt.isEmpty()) {
+                nbtIds.add(rule.id);
+            }
+            try {
+                ResourceLocation key = new ResourceLocation(rule.id);
+                Block block = ForgeRegistries.BLOCKS.getValue(key);
+                if (block != null && block != Blocks.AIR) {
+                    blocks.add(block);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        blockIdsNeedingNbt = Collections.unmodifiableSet(nbtIds);
+        trackedBlocks = Collections.unmodifiableSet(blocks);
+    }
+
+    public static boolean hasItemBlacklist() {
+        return itemRulesPresent;
     }
 
     private static String readFile(Path path) throws IOException {
@@ -299,6 +343,7 @@ public class ConfigHandler {
         } catch (Exception e) {
             ItemBan.LOGGER.error("Failed to load blacklist", e);
         }
+        rebuildIndexes();
     }
 
     @SuppressWarnings("unchecked")
@@ -342,6 +387,7 @@ public class ConfigHandler {
         } catch (Exception e) {
             ItemBan.LOGGER.error("Failed to load block blacklist", e);
         }
+        rebuildIndexes();
     }
 
     public static void saveBlockBlacklist() {
@@ -393,11 +439,11 @@ public class ConfigHandler {
     }
 
     public static List<BlacklistRule> getBlacklistRules() {
-        return Collections.unmodifiableList(blacklistRules);
+        return itemRulesSnapshot;
     }
 
     public static List<BlacklistRule> getBlockBlacklistRules() {
-        return Collections.unmodifiableList(blockBlacklistRules);
+        return blockRulesSnapshot;
     }
 
     public static void addToBlacklist(String itemId) {
@@ -410,6 +456,7 @@ public class ConfigHandler {
         rule.nbtString = nbtString;
         blacklistRules.add(rule);
         saveBlacklist();
+        rebuildIndexes();
     }
 
     public static void removeFromBlacklist(String itemId) {
@@ -423,6 +470,7 @@ public class ConfigHandler {
             blacklistRules.removeIf(r -> r.equalsRule(itemId, nbtString));
         }
         saveBlacklist();
+        rebuildIndexes();
     }
 
     public static void addToBlockBlacklist(String blockId) {
@@ -435,6 +483,7 @@ public class ConfigHandler {
         rule.nbtString = nbtString;
         blockBlacklistRules.add(rule);
         saveBlockBlacklist();
+        rebuildIndexes();
     }
 
     public static void removeFromBlockBlacklist(String blockId) {
@@ -448,43 +497,24 @@ public class ConfigHandler {
             blockBlacklistRules.removeIf(r -> r.equalsRule(blockId, nbtString));
         }
         saveBlockBlacklist();
+        rebuildIndexes();
     }
 
 
     public static boolean hasBlockBlacklist() {
-        return !blockBlacklistRules.isEmpty();
+        return blockRulesPresent;
     }
 
-    public static boolean isBlockIdTracked(String blockId) {
-        for (BlacklistRule rule : blockBlacklistRules) {
-            if (rule.id != null && rule.id.equals(blockId)) {
-                return true;
-            }
-        }
-        return false;
+    public static boolean isTrackedBlock(Block block) {
+        return !trackedBlocks.isEmpty() && trackedBlocks.contains(block);
     }
 
     public static boolean blockIdNeedsNbt(String blockId) {
-        for (BlacklistRule rule : blockBlacklistRules) {
-            if (rule.id == null || !rule.id.equals(blockId)) {
-                continue;
-            }
-            if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
-                return true;
-            }
-            if (rule.nbt != null && !rule.nbt.isEmpty()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static boolean isBlockBlacklisted(String blockId) {
-        return blockBlacklistRules.stream().anyMatch(r -> r.id.equals(blockId) && (r.nbt == null || r.nbt.isEmpty()) && (r.nbtString == null || r.nbtString.isEmpty()));
+        return blockIdsNeedingNbt.contains(blockId);
     }
 
     public static boolean isBlockBlacklisted(String blockId, CompoundNBT nbt) {
-        for (BlacklistRule rule : blockBlacklistRules) {
+        for (BlacklistRule rule : blockRulesSnapshot) {
             if (rule.matches(blockId, nbt)) {
                 return true;
             }
@@ -492,12 +522,8 @@ public class ConfigHandler {
         return false;
     }
 
-    public static boolean isBlacklisted(String itemId) {
-        return blacklistRules.stream().anyMatch(r -> r.id.equals(itemId) && (r.nbt == null || r.nbt.isEmpty()));
-    }
-
     public static boolean isBlacklisted(String itemId, CompoundNBT nbt) {
-        for (BlacklistRule rule : blacklistRules) {
+        for (BlacklistRule rule : itemRulesSnapshot) {
             if (rule.matches(itemId, nbt)) {
                 return true;
             }

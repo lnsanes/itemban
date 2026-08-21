@@ -12,6 +12,23 @@ import net.minecraftforge.fml.common.Mod;
 @Mod.EventBusSubscriber(modid = ItemBan.MODID)
 public class CommandHandler {
 
+    static final class IdAndNbt {
+        final String id;
+        final String nbt;
+        IdAndNbt(String id, String nbt) {
+            this.id = id;
+            this.nbt = nbt;
+        }
+    }
+
+    static IdAndNbt parseIdAndNbt(String input) {
+        int braceIndex = input.indexOf('{');
+        if (braceIndex > 0) {
+            return new IdAndNbt(input.substring(0, braceIndex), input.substring(braceIndex));
+        }
+        return new IdAndNbt(input, null);
+    }
+
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
@@ -21,46 +38,24 @@ public class CommandHandler {
             .then(Commands.literal("add")
                 .then(Commands.argument("item", StringArgumentType.greedyString())
                     .executes(ctx -> {
-                        String input = StringArgumentType.getString(ctx, "item");
-                        String itemId;
-                        String nbtString = null;
-
-                        int braceIndex = input.indexOf('{');
-                        if (braceIndex > 0) {
-                            itemId = input.substring(0, braceIndex);
-                            nbtString = input.substring(braceIndex);
-                        } else {
-                            itemId = input;
-                        }
-
-                        ConfigHandler.addToBlacklist(itemId, nbtString);
+                        IdAndNbt parsed = parseIdAndNbt(StringArgumentType.getString(ctx, "item"));
+                        ConfigHandler.addToBlacklist(parsed.id, parsed.nbt);
                         int stripped = RecipeStripper.applyFromSnapshot(ctx.getSource().getServer());
-                        String msg = nbtString != null 
-                            ? "已添加黑名单物品: " + itemId + " (带 NBT)，已更新配方表（移除 " + stripped + " 条）"
-                            : "已添加黑名单物品: " + itemId + "，已更新配方表（移除 " + stripped + " 条）";
+                        String msg = parsed.nbt != null 
+                            ? "已添加黑名单物品: " + parsed.id + " (带 NBT)，已更新配方表（移除 " + stripped + " 条）"
+                            : "已添加黑名单物品: " + parsed.id + "，已更新配方表（移除 " + stripped + " 条）";
                         ctx.getSource().sendSuccess(() -> Component.literal(msg), true);
                         return 1;
                     })))
             .then(Commands.literal("remove")
                 .then(Commands.argument("item", StringArgumentType.greedyString())
                     .executes(ctx -> {
-                        String input = StringArgumentType.getString(ctx, "item");
-                        String itemId;
-                        String nbtString = null;
-
-                        int braceIndex = input.indexOf('{');
-                        if (braceIndex > 0) {
-                            itemId = input.substring(0, braceIndex);
-                            nbtString = input.substring(braceIndex);
-                        } else {
-                            itemId = input;
-                        }
-
-                        ConfigHandler.removeFromBlacklist(itemId, nbtString);
+                        IdAndNbt parsed = parseIdAndNbt(StringArgumentType.getString(ctx, "item"));
+                        ConfigHandler.removeFromBlacklist(parsed.id, parsed.nbt);
                         int stripped = RecipeStripper.applyFromSnapshot(ctx.getSource().getServer());
-                        String msg = nbtString != null 
-                            ? "已移除黑名单物品: " + itemId + " (指定 NBT)，已恢复对应配方（当前仍过滤 " + stripped + " 条）"
-                            : "已移除黑名单物品: " + itemId + " (所有规则)，已恢复对应配方（当前仍过滤 " + stripped + " 条）";
+                        String msg = parsed.nbt != null 
+                            ? "已移除黑名单物品: " + parsed.id + " (指定 NBT)，已恢复对应配方（当前仍过滤 " + stripped + " 条）"
+                            : "已移除黑名单物品: " + parsed.id + " (所有规则)，已恢复对应配方（当前仍过滤 " + stripped + " 条）";
                         ctx.getSource().sendSuccess(() -> Component.literal(msg), true);
                         return 1;
                     })))
@@ -142,21 +137,17 @@ public class CommandHandler {
                 .then(Commands.literal("add")
                     .then(Commands.argument("block", StringArgumentType.greedyString())
                         .executes(ctx -> {
-                            String input = StringArgumentType.getString(ctx, "block");
-                            String blockId = input.contains("{") ? input.substring(0, input.indexOf("{")) : input;
-                            String nbt = input.contains("{") ? input.substring(input.indexOf("{")) : null;
-                            ConfigHandler.addToBlockBlacklist(blockId, nbt);
-                            ctx.getSource().sendSuccess(() -> Component.literal("§a已将方块 " + input + " 加入方块黑名单"), true);
+                            IdAndNbt parsed = parseIdAndNbt(StringArgumentType.getString(ctx, "block"));
+                            ConfigHandler.addToBlockBlacklist(parsed.id, parsed.nbt);
+                            ctx.getSource().sendSuccess(() -> Component.literal("§a已将方块 " + StringArgumentType.getString(ctx, "block") + " 加入方块黑名单"), true);
                             return 1;
                         })))
                 .then(Commands.literal("remove")
                     .then(Commands.argument("block", StringArgumentType.greedyString())
                         .executes(ctx -> {
-                            String input = StringArgumentType.getString(ctx, "block");
-                            String blockId = input.contains("{") ? input.substring(0, input.indexOf("{")) : input;
-                            String nbt = input.contains("{") ? input.substring(input.indexOf("{")) : null;
-                            ConfigHandler.removeFromBlockBlacklist(blockId, nbt);
-                            ctx.getSource().sendSuccess(() -> Component.literal("§c已将方块 " + input + " 从方块黑名单移除"), true);
+                            IdAndNbt parsed = parseIdAndNbt(StringArgumentType.getString(ctx, "block"));
+                            ConfigHandler.removeFromBlockBlacklist(parsed.id, parsed.nbt);
+                            ctx.getSource().sendSuccess(() -> Component.literal("§c已将方块 " + StringArgumentType.getString(ctx, "block") + " 从方块黑名单移除"), true);
                             return 1;
                         })))
                 .then(Commands.literal("list")
@@ -176,8 +167,7 @@ public class CommandHandler {
                 .then(Commands.literal("add")
                     .then(Commands.argument("item", StringArgumentType.greedyString())
                         .executes(ctx -> {
-                            String input = StringArgumentType.getString(ctx, "item");
-                            String itemId = input.contains("{") ? input.substring(0, input.indexOf("{")) : input;
+                            String itemId = parseIdAndNbt(StringArgumentType.getString(ctx, "item")).id;
                             ConfigHandler.addExcludeFromLog(itemId);
                             ctx.getSource().sendSuccess(() -> Component.literal("§a已将 " + itemId + " 加入审计排除列表"), true);
                             return 1;
@@ -185,8 +175,7 @@ public class CommandHandler {
                 .then(Commands.literal("remove")
                     .then(Commands.argument("item", StringArgumentType.greedyString())
                         .executes(ctx -> {
-                            String input = StringArgumentType.getString(ctx, "item");
-                            String itemId = input.contains("{") ? input.substring(0, input.indexOf("{")) : input;
+                            String itemId = parseIdAndNbt(StringArgumentType.getString(ctx, "item")).id;
                             ConfigHandler.removeExcludeFromLog(itemId);
                             ctx.getSource().sendSuccess(() -> Component.literal("§c已将 " + itemId + " 从审计排除列表移除"), true);
                             return 1;

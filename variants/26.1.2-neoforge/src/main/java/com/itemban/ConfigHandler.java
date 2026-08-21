@@ -3,6 +3,7 @@ package com.itemban;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.io.IOException;
@@ -18,8 +19,15 @@ public class ConfigHandler {
     private static final Path BLOCK_BLACKLIST_FILE = CONFIG_DIR.resolve("block_blacklist.json");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config.json");
 
-    private static List<BlacklistRule> blacklistRules = new ArrayList<>();
-    private static List<BlacklistRule> blockBlacklistRules = new ArrayList<>();
+    private static final List<BlacklistRule> blacklistRules = new ArrayList<>();
+    private static final List<BlacklistRule> blockBlacklistRules = new ArrayList<>();
+    private static volatile List<BlacklistRule> itemRulesSnapshot = List.of();
+    private static volatile List<BlacklistRule> blockRulesSnapshot = List.of();
+    private static volatile Set<String> blockIdsNeedingNbt = Set.of();
+    private static volatile Set<net.minecraft.world.level.block.Block> trackedBlocks = Set.of();
+    private static volatile boolean itemRulesPresent = false;
+    private static volatile boolean blockRulesPresent = false;
+
 
     /** Whether to broadcast chat announcements. */
     public static boolean publicAnnounce = true;
@@ -36,6 +44,7 @@ public class ConfigHandler {
         public String id;
         public String nbtString; // kept for backward compat in config files
         public Map<String, Object> nbt; // legacy map format
+        transient net.minecraft.nbt.CompoundTag parsedNbt;
 
         public boolean matchesId(String itemId) {
             return id != null && id.equals(itemId);
@@ -47,6 +56,45 @@ public class ConfigHandler {
             return Objects.equals(nbtString, nbtStr);
         }
     }
+
+
+    private static void rebuildIndexes() {
+        for (BlacklistRule rule : blacklistRules) {
+            rule.parsedNbt = null;
+            try {
+                if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                    rule.parsedNbt = net.minecraft.nbt.TagParser.parseCompoundFully(rule.nbtString);
+                }
+            } catch (Exception ignored) {}
+        }
+        for (BlacklistRule rule : blockBlacklistRules) {
+            rule.parsedNbt = null;
+            try {
+                if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                    rule.parsedNbt = net.minecraft.nbt.TagParser.parseCompoundFully(rule.nbtString);
+                }
+            } catch (Exception ignored) {}
+        }
+        itemRulesSnapshot = List.copyOf(blacklistRules);
+        blockRulesSnapshot = List.copyOf(blockBlacklistRules);
+        itemRulesPresent = !blacklistRules.isEmpty();
+        blockRulesPresent = !blockBlacklistRules.isEmpty();
+        java.util.Set<String> nbtIds = new java.util.HashSet<>();
+        java.util.Set<net.minecraft.world.level.block.Block> blocks = new java.util.HashSet<>();
+        for (BlacklistRule rule : blockBlacklistRules) {
+            if (rule.id == null) continue;
+            if (rule.parsedNbt != null && !rule.parsedNbt.isEmpty()) nbtIds.add(rule.id);
+            try {
+                net.minecraft.world.level.block.Block block = BuiltInRegistries.BLOCK.get(net.minecraft.resources.Identifier.parse(rule.id))
+                        .map(net.minecraft.core.Holder::value)
+                        .orElse(null);
+                if (block != null && block != net.minecraft.world.level.block.Blocks.AIR) blocks.add(block);
+            } catch (Exception ignored) {}
+        }
+        blockIdsNeedingNbt = java.util.Set.copyOf(nbtIds);
+        trackedBlocks = java.util.Set.copyOf(blocks);
+    }
+    public static boolean hasItemBlacklist() { return itemRulesPresent; }
 
     public static void register() {
         try {
@@ -159,6 +207,7 @@ public class ConfigHandler {
         } catch (Exception e) {
             ItemBan.LOGGER.error("Failed to load blacklist", e);
         }
+        rebuildIndexes();
     }
 
     public static void saveBlacklist() {
@@ -181,6 +230,7 @@ public class ConfigHandler {
         } catch (Exception e) {
             ItemBan.LOGGER.error("Failed to load block blacklist", e);
         }
+        rebuildIndexes();
     }
 
     public static void saveBlockBlacklist() {
@@ -191,8 +241,8 @@ public class ConfigHandler {
         }
     }
 
-    public static List<BlacklistRule> getBlacklistRules() { return Collections.unmodifiableList(blacklistRules); }
-    public static List<BlacklistRule> getBlockBlacklistRules() { return Collections.unmodifiableList(blockBlacklistRules); }
+    public static List<BlacklistRule> getBlacklistRules() { return itemRulesSnapshot; }
+    public static List<BlacklistRule> getBlockBlacklistRules() { return blockRulesSnapshot; }
 
     public static void addToBlacklist(String id) { addToBlacklist(id, null); }
     public static void addToBlacklist(String id, String nbtString) {
@@ -201,6 +251,7 @@ public class ConfigHandler {
         r.nbtString = nbtString;
         blacklistRules.add(r);
         saveBlacklist();
+        rebuildIndexes();
     }
 
     public static void removeFromBlacklist(String id) { removeFromBlacklist(id, null); }
@@ -208,6 +259,7 @@ public class ConfigHandler {
         if (nbtString == null || nbtString.isEmpty()) blacklistRules.removeIf(r -> r.matchesId(id));
         else blacklistRules.removeIf(r -> r.equalsRule(id, nbtString));
         saveBlacklist();
+        rebuildIndexes();
     }
 
     public static void addToBlockBlacklist(String id) { addToBlockBlacklist(id, null); }
@@ -217,6 +269,7 @@ public class ConfigHandler {
         r.nbtString = nbtString;
         blockBlacklistRules.add(r);
         saveBlockBlacklist();
+        rebuildIndexes();
     }
 
     public static void removeFromBlockBlacklist(String id) { removeFromBlockBlacklist(id, null); }
@@ -224,18 +277,16 @@ public class ConfigHandler {
         if (nbtString == null || nbtString.isEmpty()) blockBlacklistRules.removeIf(r -> r.matchesId(id));
         else blockBlacklistRules.removeIf(r -> r.equalsRule(id, nbtString));
         saveBlockBlacklist();
+        rebuildIndexes();
     }
 
-    public static boolean isBlacklisted(String itemId) {
-        return blacklistRules.stream().anyMatch(r -> r.matchesId(itemId) && (r.nbtString == null || r.nbtString.isEmpty()) && (r.nbt == null || r.nbt.isEmpty()));
-    }
 
     /**
      * 1.21+ matching: rules that carry NBT currently match only by ID (Data Components migration).
      * Plain-ID rules behave exactly as before. NBT rules are treated as ID-only until component-aware matching is added.
      */
     public static boolean isBlacklisted(String itemId, net.minecraft.world.item.ItemStack stack) {
-        for (BlacklistRule r : blacklistRules) {
+        for (BlacklistRule r : itemRulesSnapshot) {
             if (r.matchesId(itemId)) {
                 if (r.nbtString == null || r.nbtString.isEmpty()) return true;
                 // TODO(1.21): compare DataComponents; for now treat NBT rules as ID match
@@ -247,49 +298,23 @@ public class ConfigHandler {
 
 
     public static boolean hasBlockBlacklist() {
-        return !blockBlacklistRules.isEmpty();
+        return blockRulesPresent;
     }
-
-    public static boolean isBlockIdTracked(String blockId) {
-        for (BlacklistRule rule : blockBlacklistRules) {
-            if (rule.id != null && rule.id.equals(blockId)) {
-                return true;
-            }
-        }
-        return false;
+    public static boolean isTrackedBlock(net.minecraft.world.level.block.Block block) {
+        return !trackedBlocks.isEmpty() && trackedBlocks.contains(block);
     }
-
     public static boolean blockIdNeedsNbt(String blockId) {
-        for (BlacklistRule rule : blockBlacklistRules) {
-            if (rule.id == null || !rule.id.equals(blockId)) {
-                continue;
-            }
-            if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
-                return true;
-            }
-            if (rule.nbt != null && !rule.nbt.isEmpty()) {
-                return true;
-            }
-        }
-        return false;
+        return blockIdsNeedingNbt.contains(blockId);
     }
 
-    public static boolean isBlockBlacklisted(String blockId) {
-        return blockBlacklistRules.stream().anyMatch(r -> r.matchesId(blockId) && (r.nbtString == null || r.nbtString.isEmpty()) && (r.nbt == null || r.nbt.isEmpty()));
-    }
 
     public static boolean isBlockBlacklisted(String blockId, net.minecraft.nbt.CompoundTag blockEntityData) {
-        for (BlacklistRule r : blockBlacklistRules) {
+        for (BlacklistRule r : blockRulesSnapshot) {
             if (r.matchesId(blockId)) {
                 if (r.nbtString == null || r.nbtString.isEmpty()) return true;
                 // Block entities in 1.21 still expose NBT via saveAdditional/saveWithFullMetadata with provider; keep old-style contains check
-                if (blockEntityData != null && r.nbtString != null) {
-                    try {
-                        var required = net.minecraft.nbt.TagParser.parseCompoundFully(r.nbtString);
-                        return nbtContains(blockEntityData, required);
-                    } catch (Exception e) {
-                        return true; // fallback to ID match
-                    }
+                if (blockEntityData != null && r.parsedNbt != null && !r.parsedNbt.isEmpty()) {
+                    return nbtContains(blockEntityData, r.parsedNbt);
                 }
                 return true;
             }
