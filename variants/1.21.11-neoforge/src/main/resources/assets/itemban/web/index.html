@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>ItemBan 管理面板</title>
+  <style nonce="{{CSP_NONCE}}">
+    html[data-theme="dark"], .theme-dark {
+      --bg: #0a0a0a;
+      --panel: #111;
+      --panel-solid: #161616;
+      --panel2: #1c1c1c;
+      --line: rgba(255,255,255,.12);
+      --text: #f4f4f4;
+      --muted: #9a9a9a;
+      --accent: #fff;
+      --accent-ink: #111;
+      --warn: #cfcfcf;
+      --shadow: 0 16px 40px rgba(0,0,0,.45);
+      --header: rgba(8,8,8,.86);
+      --tabs: #0e0e0e;
+      --hover: rgba(255,255,255,.06);
+      --grid: rgba(255,255,255,.04);
+      --log-bg: #000;
+      --code: #e8e8e8;
+      --pill-bg: rgba(255,255,255,.1);
+      --pill-fg: #fff;
+      --toggle-off: #3a3a3a;
+      color-scheme: dark;
+    }
+    html[data-theme="light"], .theme-light {
+      --bg: #f7f7f7;
+      --panel: #fff;
+      --panel-solid: #fff;
+      --panel2: #f2f2f2;
+      --line: rgba(0,0,0,.12);
+      --text: #111;
+      --muted: #666;
+      --accent: #111;
+      --accent-ink: #fff;
+      --warn: #333;
+      --shadow: 0 16px 40px rgba(0,0,0,.08);
+      --header: rgba(255,255,255,.92);
+      --tabs: #f0f0f0;
+      --hover: rgba(0,0,0,.04);
+      --grid: rgba(0,0,0,.05);
+      --log-bg: #f4f4f4;
+      --code: #111;
+      --pill-bg: rgba(0,0,0,.08);
+      --pill-fg: #111;
+      --toggle-off: #c8c8c8;
+      color-scheme: light;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; background: var(--bg); }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      transition: none;
+    }
+    .wrap, .toast { position: relative; z-index: 1; }
+    #shell, #shell-old {
+      position: relative;
+      min-height: 100vh;
+      background: var(--bg);
+    }
+    #shell { z-index: 1; }
+    #shell-old {
+      position: fixed; inset: 0; z-index: 0;
+      pointer-events: none; overflow: hidden;
+    }
+    #shell::before, #shell-old::before {
+      content: "";
+      position: absolute; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at top, #000 40%, transparent 82%);
+    }
+    #shell.theme-reveal {
+      animation: ink-spread 1.4s cubic-bezier(.22, .2, .2, 1) both;
+    }
+    header {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--line);
+      background: var(--header);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .mark {
+      width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
+      display: grid; place-items: center;
+      background: var(--accent); color: var(--accent-ink);
+      font-weight: 800; font-size: 15px; letter-spacing: -.04em;
+    }
+    header h1 { margin: 0; font-size: 18px; letter-spacing: .02em; }
+    header .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    header .right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .who {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; border-radius: 999px;
+      background: var(--hover); border: 1px solid var(--line);
+    }
+    .who .name { font-size: 13px; font-weight: 600; }
+    header .act { margin: 0; }
+    .theme-slot {
+      width: 92px; height: 32px; flex-shrink: 0;
+    }
+    .theme-btn {
+      position: fixed; z-index: 10000; margin: 0;
+      border: 1px solid rgba(255,255,255,.12);
+      background: #1c1c1c;
+      color: #f4f4f4;
+      border-radius: 999px;
+      padding: 5px 10px 7px 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: inline-flex; align-items: center; gap: 8px;
+      top: 16px; right: 24px;
+      pointer-events: auto;
+      transition: transform .2s ease, background-color .25s ease, color .25s ease, border-color .25s ease;
+    }
+    .theme-btn[data-mode="light"] {
+      background: #f2f2f2;
+      color: #111;
+      border-color: rgba(0,0,0,.12);
+    }
+    .theme-btn:hover { filter: brightness(1.08); }
+    .theme-btn:active { transform: scale(.96); }
+    .theme-track {
+      width: 38px; height: 20px; border-radius: 999px; position: relative; flex-shrink: 0;
+      background: #3a3a3a;
+      border: 1px solid rgba(255,255,255,.12);
+      transition: background-color .25s ease, border-color .25s ease;
+    }
+    .theme-btn[data-mode="light"] .theme-track {
+      background: #c8c8c8;
+      border-color: rgba(0,0,0,.12);
+    }
+    .theme-knob {
+      position: absolute; top: 1px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,.35);
+      transition: transform .28s cubic-bezier(.22, 1, .36, 1), background-color .25s ease;
+    }
+    .theme-btn[data-mode="light"] .theme-knob {
+      transform: translateX(16px);
+      background: #111;
+    }
+    #themeLabel {
+      min-width: 2em;
+      display: inline-block;
+    }
+    @keyframes ink-spread {
+      from { clip-path: circle(0px at 50% 50%); }
+      to { clip-path: circle(150vmax at 50% 50%); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .theme-knob, .theme-btn, #shell.theme-reveal {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 48px; }
+    body.is-auth .wrap { max-width: 460px; padding-top: 56px; }
+    .tabs {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+      padding: 6px; border-radius: 14px;
+      background: var(--tabs); border: 1px solid var(--line);
+    }
+    .tabs button {
+      background: transparent; color: var(--muted); border: 0;
+      padding: 9px 14px; border-radius: 10px; cursor: pointer; font-size: 13px;
+      transition: background-color .25s ease, color .25s ease;
+    }
+    .tabs button:hover { color: var(--text); background: var(--hover); }
+    .tabs button.active { background: var(--accent); color: var(--accent-ink); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: var(--shadow);
+    }
+    h2 { margin: 0 0 6px; font-size: 17px; }
+    .lead { color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+    label { display: block; color: var(--muted); font-size: 12px; margin: 12px 0 6px; }
+    input, textarea, select {
+      width: 100%; padding: 10px 12px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+      outline: none;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--text);
+      box-shadow: 0 0 0 3px var(--hover);
+    }
+    textarea { min-height: 84px; font-family: Consolas, "Cascadia Mono", monospace; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) {
+      .row { grid-template-columns: 1fr; }
+      header { padding: 12px 14px; }
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    button.act {
+      background: var(--accent); color: var(--accent-ink); border: 0; padding: 9px 14px;
+      border-radius: 10px; cursor: pointer; font-weight: 600;
+    }
+    button.act:hover { filter: brightness(1.05); }
+    button.danger { background: transparent; color: var(--text); border: 1px solid var(--text); }
+    button.ok { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+    button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 16px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+    tbody tr:hover { background: var(--hover); }
+    td:last-child { width: 88px; }
+    table.accounts th, table.accounts td { vertical-align: middle; }
+    table.accounts th:nth-child(1), table.accounts td:nth-child(1) { width: 46%; }
+    table.accounts th:nth-child(2), table.accounts td:nth-child(2) { width: 34%; }
+    table.accounts th.col-actions, table.accounts td.col-actions { width: 20%; text-align: right; white-space: nowrap; }
+    table.accounts td.col-actions .act { margin: 0; }
+    .empty { color: var(--muted); text-align: center; padding: 28px 8px !important; }
+    .name { font-weight: 600; }
+    .id { color: var(--muted); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+    .nbt { color: var(--warn); font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; word-break: break-all; margin-top: 4px; }
+    .pill {
+      display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px;
+      font-size: 12px; font-weight: 700;
+      background: var(--pill-bg); color: var(--pill-fg);
+    }
+    .switch {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 14px; margin: 0 0 8px; border-radius: 12px;
+      background: var(--hover); border: 1px solid var(--line);
+    }
+    .switch .copy { display: flex; flex-direction: column; gap: 4px; }
+    .switch .title { font-weight: 600; }
+    .switch .hint { color: var(--muted); font-size: 12px; }
+    .toggle {
+      position: relative; width: 48px; height: 26px; margin: 0; padding: 0; border: 0;
+      border-radius: 13px; background: var(--toggle-off); cursor: pointer; flex-shrink: 0;
+    }
+    .toggle .knob {
+      position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+      border-radius: 50%; background: #fff;
+      transition: transform .28s cubic-bezier(.22, 1, .36, 1);
+    }
+    .toggle.on { background: var(--text); }
+    html[data-theme="dark"] .toggle.on .knob { background: #111; }
+    .toggle.on .knob { transform: translateX(22px); }
+    .toggle:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    .toast {
+      position: fixed; right: 16px; bottom: 16px;
+      background: var(--panel-solid); color: var(--text); padding: 12px 16px; border-radius: 12px;
+      border: 1px solid var(--line); box-shadow: var(--shadow);
+      display: none; z-index: 5;
+    }
+    .search-list {
+      max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 12px;
+      margin-top: 8px; background: var(--panel2);
+    }
+    .search-list div { padding: 9px 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+    .search-list div:hover { background: var(--hover); }
+    pre.logs {
+      white-space: pre-wrap; background: var(--log-bg); padding: 14px; border-radius: 12px;
+      max-height: 420px; overflow: auto; font-size: 12px; border: 1px solid var(--line);
+      color: var(--text); margin: 12px 0 0;
+    }
+    code { font-family: Consolas, "Cascadia Mono", monospace; color: var(--code); }
+    .hidden { display: none !important; }
+    section.card[id^="tab-"],
+    #shell-old section.card:not(.tab-visible) { display: none; }
+    section.card[id^="tab-"].tab-visible { display: block; animation: tabIn .28s ease both; }
+    #shell-old section.card.tab-visible { display: block; animation: none; }
+    @keyframes tabIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+</style>
+</head>
+<body class="is-auth">
+  <div id="shell">
+  <header>
+    <div class="brand">
+      <div class="mark">IB</div>
+      <div>
+        <h1>ItemBan 网页管理</h1>
+        <div class="meta">权限节点 <code>itemban.ban</code> · 版本 <span id="ver">2.1.0</span></div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="who hidden" id="who">
+        <span class="name" id="whoName"></span>
+        <span class="pill user" id="whoRole"></span>
+      </div>
+      <span class="theme-slot" id="themeSlot" aria-hidden="true"></span>
+      <button type="button" class="act ghost hidden" id="logoutBtn" data-cmd="logout">退出</button>
+    </div>
+  </header>
+  <div class="wrap">
+    <div id="login" class="card">
+      <h2>登录管理面板</h2>
+      <p class="lead{{SETUP_HINT_HIDDEN}}">首次启动会生成 <strong>一次性密码</strong>（控制台或 <code>/itemban web</code>），登录后必须设置正式密码。</p>
+      <label>账号</label>
+      <input id="user" name="itemban-user" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label>密码</label>
+      <input id="pass" type="password" name="itemban-pass" autocomplete="off">
+      <div class="actions">
+        <button type="button" class="act" data-cmd="login">进入面板</button>
+      </div>
+    </div>
+    <div id="setup" class="card hidden">
+      <h2>设置正式密码</h2>
+      <p class="lead">一次性密码已失效。请为 <code>admin</code> 设置正式密码（至少 8 个字符），之后才能进入面板。</p>
+      <label>新密码</label>
+      <input id="newPass" type="password" autocomplete="new-password">
+      <label>再输入一次</label>
+      <input id="newPass2" type="password" autocomplete="new-password">
+      <div class="actions">
+        <button type="button" class="act" data-cmd="saveSetupPassword">保存并进入</button>
+      </div>
+    </div>
+    <div id="app" class="hidden">
+      <div class="tabs">
+        <button class="active" data-tab="items">物品黑名单</button>
+        <button data-tab="blocks">方块黑名单</button>
+        <button data-tab="exclude">审计排除</button>
+        <button data-tab="settings">功能开关</button>
+        <button data-tab="logs">审计日志</button>
+        <button data-tab="accounts" id="tabBtnAccounts" class="hidden">账号管理</button>
+      </div>
+      <section id="tab-items" class="card tab-visible">
+        <h2>物品黑名单</h2>
+        <p class="lead">搜索并加入违禁物品。带 NBT 的规则只匹配对应标签。</p>
+        <div class="row">
+          <div>
+            <label>搜索中文名或 ID</label>
+            <input id="itemSearch" placeholder="例如：钻石剑 或 minecraft:diamond_sword">
+            <div id="itemHits" class="search-list"></div>
+          </div>
+          <div>
+            <label>物品 ID</label>
+            <input id="itemId" placeholder="minecraft:diamond_sword">
+            <label>NBT / SNBT（可选）</label>
+            <textarea id="itemNbt" placeholder='{Enchantments:[{id:"minecraft:sharpness",lvl:5}]}'></textarea>
+            <div class="actions">
+              <button type="button" class="act" data-cmd="addItem">加入黑名单</button>
+              <button type="button" class="act ok" data-cmd="reloadCfg">重载并更新配方</button>
+            </div>
+          </div>
+        </div>
+        <table><thead><tr><th>中文名</th><th>ID / NBT</th><th></th></tr></thead><tbody id="itemTable"></tbody></table>
+      </section>
+      <section id="tab-blocks" class="card">
+        <h2>方块黑名单</h2>
+        <p class="lead">禁止放置或保留在世界中的方块。</p>
+        <div class="row">
+          <div>
+            <label>搜索中文名或 ID</label>
+            <input id="blockSearch" placeholder="例如：箱子 或 minecraft:chest">
+            <div id="blockHits" class="search-list"></div>
+          </div>
+          <div>
+            <label>方块 ID</label>
+            <input id="blockId">
+            <label>NBT / SNBT（可选）</label>
+            <textarea id="blockNbt"></textarea>
+            <div class="actions">
+              <button type="button" class="act" data-cmd="addBlock">加入方块黑名单</button>
+            </div>
+          </div>
+        </div>
+        <table><thead><tr><th>中文名</th><th>ID / NBT</th><th></th></tr></thead><tbody id="blockTable"></tbody></table>
+      </section>
+      <section id="tab-exclude" class="card">
+        <h2>审计排除</h2>
+        <p class="lead">仍会删除、公示或踢出，但不写入 <code>logs/ItemBan/</code>。</p>
+        <div class="row">
+          <div>
+            <label>物品 ID</label>
+            <input id="excludeId">
+            <div class="actions">
+              <button type="button" class="act" data-cmd="addExclude">加入排除</button>
+            </div>
+          </div>
+        </div>
+        <table><thead><tr><th>中文名</th><th>ID</th><th></th></tr></thead><tbody id="excludeTable"></tbody></table>
+      </section>
+      <section id="tab-settings" class="card">
+        <h2>功能开关</h2>
+        <p class="lead">这些选项立即写入配置，可随时重载配方表。</p>
+        <div class="switch">
+          <div class="copy"><span class="title">聊天栏公示</span><span class="hint">announce · 向玩家广播违禁处理</span></div>
+          <button type="button" class="toggle" id="btn-announce" data-toggle="publicAnnounce"><span class="knob"></span></button>
+        </div>
+        <div class="switch">
+          <div class="copy"><span class="title">违禁自动封禁</span><span class="hint">autoban · 触发作弊物品时封禁玩家</span></div>
+          <button type="button" class="toggle" id="btn-autoban" data-toggle="autoBanOnViolation"><span class="knob"></span></button>
+        </div>
+        <div class="switch">
+          <div class="copy"><span class="title">掉落物范围扫描</span><span class="hint">dropdetect · 关闭后改为即时拦截</span></div>
+          <button type="button" class="toggle" id="btn-drop" data-toggle="detectDroppedItems"><span class="knob"></span></button>
+        </div>
+        <div class="switch">
+          <div class="copy"><span class="title">世界方块检测</span><span class="hint">blockscan · 扫描世界中的违禁方块</span></div>
+          <button type="button" class="toggle" id="btn-blockscan" data-toggle="detectWorldBlocks"><span class="knob"></span></button>
+        </div>
+        <div class="actions">
+          <button type="button" class="act ok" data-cmd="reloadCfg">重载配置并重建配方表</button>
+        </div>
+      </section>
+      <section id="tab-logs" class="card">
+        <h2>审计日志</h2>
+        <p class="lead">显示今天最新的处理记录。</p>
+        <div class="actions">
+          <button type="button" class="act ghost" data-cmd="loadLogs">刷新</button>
+        </div>
+        <pre class="logs" id="logBox"></pre>
+      </section>
+      <section id="tab-accounts" class="card">
+        <h2>账号管理</h2>
+        <p class="lead">仅 <code>admin</code> 或 <code>owner</code> 可注册、删除账号。只有 <code>admin</code> 能注册或删除 owner；不能删除 <code>admin</code> 和当前登录账号。</p>
+        <div class="row">
+          <div>
+            <label>新账号</label>
+            <input id="regUser" placeholder="字母、数字、下划线">
+            <label>密码</label>
+            <input id="regPass" type="password" autocomplete="new-password">
+            <label>权限</label>
+            <select id="regRole">
+              <option value="user">user（普通）</option>
+              <option value="owner">owner（可管理账号）</option>
+            </select>
+            <div class="actions">
+              <button type="button" class="act" data-cmd="registerAccount">注册账号</button>
+            </div>
+          </div>
+        </div>
+        <table class="accounts"><thead><tr><th>账号</th><th>权限</th><th class="col-actions">操作</th></tr></thead><tbody id="accountTable"></tbody></table>
+      </section>
+    </div>
+  </div>
+  </div>
+  <button type="button" class="theme-btn" id="themeBtn" data-mode="dark" title="切换主题">
+    <span class="theme-track"><span class="theme-knob"></span></span>
+    <span id="themeLabel">浅色</span>
+  </button>
+  <div class="toast" id="toast"></div>
+  <script nonce="{{CSP_NONCE}}">
+    const THEME_KEY = "itemban_theme";
+    const themeBtnEl = document.getElementById("themeBtn");
+    let themeRevealGen = 0;
+    function pageTheme() {
+      return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    }
+    function buttonTheme() {
+      return themeBtnEl && themeBtnEl.getAttribute("data-mode") === "light" ? "light" : "dark";
+    }
+    function removeGhost() {
+      const ghost = document.getElementById("shell-old");
+      if (ghost) ghost.remove();
+    }
+    function syncThemeButton(theme) {
+      const next = theme === "light" ? "light" : "dark";
+      if (themeBtnEl) themeBtnEl.setAttribute("data-mode", next);
+      const label = themeBtnEl && themeBtnEl.querySelector("#themeLabel");
+      if (label) label.textContent = next === "dark" ? "浅色" : "深色";
+      requestAnimationFrame(pinThemeBtn);
+    }
+    function commitPageTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+    }
+    function applyTheme(theme, animate) {
+      const next = theme === "light" ? "light" : "dark";
+      const prev = pageTheme();
+      syncThemeButton(next);
+      try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+      const shell = document.getElementById("shell");
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const stopReveal = () => {
+        if (shell) shell.classList.remove("theme-reveal");
+        removeGhost();
+      };
+      if (!animate || reduce || prev === next) {
+        themeRevealGen++;
+        stopReveal();
+        commitPageTheme(next);
+        return;
+      }
+      const gen = ++themeRevealGen;
+      removeGhost();
+      if (shell) {
+        const ghost = shell.cloneNode(true);
+        ghost.classList.remove("theme-reveal");
+        ghost.classList.add(prev === "light" ? "theme-light" : "theme-dark");
+        ghost.querySelectorAll("section.card:not(.tab-visible)").forEach(s => { s.style.display = "none"; });
+        ghost.querySelectorAll("[id]").forEach(n => n.removeAttribute("id"));
+        ghost.id = "shell-old";
+        ghost.setAttribute("aria-hidden", "true");
+        shell.after(ghost);
+        shell.classList.remove("theme-reveal");
+        void shell.offsetWidth;
+        const finish = (e) => {
+          if (e && e.animationName && e.animationName !== "ink-spread") return;
+          shell.removeEventListener("animationend", finish);
+          if (gen !== themeRevealGen) return;
+          stopReveal();
+        };
+        shell.addEventListener("animationend", finish);
+        shell.classList.add("theme-reveal");
+      }
+      commitPageTheme(next);
+    }
+    function toggleTheme() {
+      applyTheme(buttonTheme() === "dark" ? "light" : "dark", true);
+    }
+    function pinThemeBtn() {
+      const slot = document.getElementById("themeSlot");
+      const btn = themeBtnEl;
+      if (!slot || !btn) return;
+      slot.style.width = btn.offsetWidth + "px";
+      slot.style.height = btn.offsetHeight + "px";
+      const r = slot.getBoundingClientRect();
+      btn.style.right = "auto";
+      btn.style.top = r.top + "px";
+      btn.style.left = r.left + "px";
+    }
+    window.addEventListener("resize", pinThemeBtn);
+    if (window.ResizeObserver) {
+      const header = document.querySelector("header");
+      if (header) new ResizeObserver(pinThemeBtn).observe(header);
+      const who = document.getElementById("who");
+      if (who) new ResizeObserver(pinThemeBtn).observe(who);
+    }
+    pinThemeBtn();
+    if (themeBtnEl) {
+      themeBtnEl.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTheme();
+      });
+    }
+    try {
+      const saved = localStorage.getItem(THEME_KEY);
+      applyTheme(saved === "light" ? "light" : "dark", false);
+    } catch (e) { applyTheme("dark", false); }
+    let TOKEN = sessionStorage.getItem("itemban_token") || "";
+    let SETUP = sessionStorage.getItem("itemban_setup") === "1";
+    let catalogItems = [], catalogBlocks = [], state = {};
+    const $ = id => document.getElementById(id);
+    function toast(t) { const el=$("toast"); el.textContent=t; el.style.display="block"; setTimeout(()=>el.style.display="none", 2200); }
+    function setSession(token, setup) {
+      TOKEN = token || "";
+      SETUP = !!setup;
+      if (TOKEN) sessionStorage.setItem("itemban_token", TOKEN); else sessionStorage.removeItem("itemban_token");
+      if (SETUP) sessionStorage.setItem("itemban_setup", "1"); else sessionStorage.removeItem("itemban_setup");
+    }
+    async function api(path, body) {
+      const opt = { headers: { "Authorization": "Bearer " + TOKEN, "Content-Type": "application/json" } };
+      if (body !== undefined) { opt.method = "POST"; opt.body = JSON.stringify(body); }
+      const r = await fetch(path, opt);
+      if (r.status === 401) { sessionStorage.removeItem("itemban_token"); sessionStorage.removeItem("itemban_setup"); location.reload(); throw new Error("未授权"); }
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "请求失败");
+      return data;
+    }
+    async function login() {
+      const username = $("user").value.trim();
+      const password = $("pass").value;
+      const data = await fetch("/api/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({username, password}) }).then(r=>r.json());
+      if (!data.ok) { toast(data.error || "账号或密码错误"); return; }
+      $("pass").value = "";
+      setSession(data.token, !!data.mustChangePassword);
+      if (data.mustChangePassword) { showSetup(); return; }
+      await boot();
+    }
+    function showSetup() {
+      document.body.classList.add("is-auth");
+      document.body.classList.remove("is-app");
+      $("login").classList.add("hidden");
+      $("setup").classList.remove("hidden");
+      $("app").classList.add("hidden");
+      pinThemeBtn();
+    }
+    async function saveSetupPassword() {
+      const a = $("newPass").value, b = $("newPass2").value;
+      if (a !== b) { toast("两次密码不一致"); return; }
+      const data = await fetch("/api/account/password", { method:"POST", headers: { "Authorization": "Bearer " + TOKEN, "Content-Type": "application/json" }, body: JSON.stringify({password: a}) }).then(r=>r.json());
+      if (!data.ok) { toast(data.error || "设置失败"); return; }
+      setSession(data.token, false);
+      $("setup").classList.add("hidden");
+      await boot();
+    }
+    $("newPass").addEventListener("keydown", e => { if (e.key === "Enter") saveSetupPassword(); });
+    $("newPass2").addEventListener("keydown", e => { if (e.key === "Enter") saveSetupPassword(); });
+    async function logout() {
+      try { await fetch("/api/logout", { method:"POST", headers: { "Authorization": "Bearer " + TOKEN } }); } catch (e) {}
+      setSession("", false);
+      location.reload();
+    }
+    $("user").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+    $("pass").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+    function showTab(id) {
+      document.querySelectorAll("section[id^=tab-]").forEach(s => s.classList.toggle("tab-visible", s.id === "tab-"+id));
+      document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab===id));
+    }
+    document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+    function esc(s){ return String(s||"").replace(/[&<>"'`]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;","`":"&#96;"}[c])); }
+    function emptyRow(text) { return `<tr><td class="empty" colspan="3">${esc(text)}</td></tr>`; }
+    function ruleRow(rule, action) {
+      const nbt = rule.nbt || "";
+      return `<tr data-action="${esc(action)}" data-id="${esc(rule.id)}" data-nbt="${esc(nbt)}"><td><div class="name">${esc(rule.name||rule.id)}</div></td><td><div class="id">${esc(rule.id)}</div>${nbt?`<div class="nbt">${esc(nbt)}</div>`:""}</td><td><button type="button" class="act danger js-remove">移除</button></td></tr>`;
+    }
+    function renderHits(box, list, pick) {
+      $(box).innerHTML = list.slice(0, 80).map(x => `<div class="js-pick" data-pick="${esc(pick)}" data-id="${esc(x.id)}"><span class="name">${esc(x.name)}</span><div class="id">${esc(x.id)}</div></div>`).join("") || "<div class='meta'>无匹配</div>";
+    }
+    function filterCat(list, q) {
+      q = (q||"").toLowerCase();
+      if (!q) return list.slice(0, 80);
+      return list.filter(x => (x.name||"").toLowerCase().includes(q) || x.id.toLowerCase().includes(q)).slice(0, 80);
+    }
+    function bindSearch(input, hits, source, pick) {
+      $(input).oninput = () => renderHits(hits, filterCat(source(), $(input).value), pick);
+    }
+    function pickItem(id) { $("itemId").value = id; }
+    function pickBlock(id) { $("blockId").value = id; }
+    function fillTable(id, rows, emptyText) {
+      $(id).innerHTML = rows.length ? rows.join("") : emptyRow(emptyText);
+    }
+    async function refresh() {
+      state = await api("/api/state");
+      $("ver").textContent = state.version || "2.1.0";
+      $("whoName").textContent = state.username || "";
+      $("whoRole").textContent = state.role || "user";
+      $("whoRole").className = "pill " + (state.role === "owner" ? "owner" : "user");
+      $("who").classList.remove("hidden");
+      pinThemeBtn();
+      fillTable("itemTable", (state.items||[]).map(r => ruleRow(r, "removeItem")), "还没有物品规则");
+      fillTable("blockTable", (state.blocks||[]).map(r => ruleRow(r, "removeBlock")), "还没有方块规则");
+      fillTable("excludeTable", (state.excludes||[]).map(r => ruleRow(r, "removeExclude")), "暂无排除项");
+      const setBtn = (id, on) => {
+        const b=$(id);
+        if (!b) return;
+        b.classList.toggle("on", !!on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      };
+      setBtn("btn-announce", state.publicAnnounce);
+      setBtn("btn-autoban", state.autoBanOnViolation);
+      setBtn("btn-drop", state.detectDroppedItems);
+      setBtn("btn-blockscan", state.detectWorldBlocks);
+      const canManage = !!state.canManageAccounts;
+      const isAdmin = String(state.username || "").toLowerCase() === "admin";
+      const ownerOpt = $("regRole").querySelector('option[value="owner"]');
+      if (ownerOpt) ownerOpt.hidden = !isAdmin;
+      if (!isAdmin) $("regRole").value = "user";
+      $("tabBtnAccounts").classList.toggle("hidden", !canManage);
+      if (canManage) await loadAccounts();
+      else if (document.querySelector(".tabs button.active")?.dataset.tab === "accounts") showTab("items");
+    }
+    async function loadAccounts() {
+      const r = await api("/api/accounts");
+      const rows = r.accounts || [];
+      $("accountTable").innerHTML = rows.length ? rows.map(a => {
+        const me = String(state.username || "");
+        const self = (a.username || "").toLowerCase() === me.toLowerCase();
+        const ownerTarget = a.role === "owner";
+        const isAdmin = me.toLowerCase() === "admin";
+        const locked = (a.username || "").toLowerCase() === "admin" || self || (ownerTarget && !isAdmin);
+        const del = locked ? "" : `<button type="button" class="act danger js-remove">删除</button>`;
+        const pill = `<span class="pill ${ownerTarget ? "owner" : "user"}">${esc(a.role)}</span>`;
+        return `<tr data-action="removeAccount" data-username="${esc(a.username)}"><td class="name">${esc(a.username)}</td><td>${pill}</td><td class="col-actions">${del}</td></tr>`;
+      }).join("") : emptyRow("暂无账号");
+    }
+    async function registerAccount() {
+      try {
+        await api("/api/accounts/add", { username: $("regUser").value.trim(), password: $("regPass").value, role: $("regRole").value });
+        $("regUser").value = ""; $("regPass").value = "";
+        toast("已注册账号");
+        await loadAccounts();
+      } catch (e) { toast(e.message || "注册失败"); }
+    }
+    async function removeAccount(username) {
+      const me = String(state.username || "");
+      if ((username || "").toLowerCase() === me.toLowerCase()) {
+        toast("不能删除当前登录账号");
+        return;
+      }
+      try {
+        await api("/api/accounts/remove", { username });
+        toast("已删除账号");
+        await loadAccounts();
+      } catch (e) { toast(e.message || "删除失败"); }
+    }
+    async function addItem(){ try { await api("/api/items/add", {id:$("itemId").value.trim(), nbt:$("itemNbt").value.trim()}); toast("已添加物品规则"); await refresh(); } catch (e) { toast(e.message || "添加失败"); } }
+    async function addBlock(){ try { await api("/api/blocks/add", {id:$("blockId").value.trim(), nbt:$("blockNbt").value.trim()}); toast("已添加方块规则"); await refresh(); } catch (e) { toast(e.message || "添加失败"); } }
+    async function addExclude(){ try { await api("/api/exclude/add", {id:$("excludeId").value.trim()}); toast("已加入审计排除"); await refresh(); } catch (e) { toast(e.message || "添加失败"); } }
+    async function removeItem(id,nbt){ await api("/api/items/remove", {id, nbt}); await refresh(); }
+    async function removeBlock(id,nbt){ await api("/api/blocks/remove", {id, nbt}); await refresh(); }
+    async function removeExclude(id){ await api("/api/exclude/remove", {id}); await refresh(); }
+    async function toggle(key){
+      if (!["publicAnnounce","autoBanOnViolation","detectDroppedItems","detectWorldBlocks"].includes(key)) return;
+      const next = !state[key];
+      await api("/api/settings", {[key]: next});
+      await refresh();
+    }
+    async function reloadCfg(){ const r = await api("/api/reload", {}); toast("已重载，当前过滤配方 "+r.stripped+" 条"); await refresh(); }
+    async function loadLogs(){ const r = await api("/api/logs"); $("logBox").textContent = r.text || "(暂无日志)"; }
+    document.addEventListener("click", e => {
+      const t = e.target.closest("[data-cmd], [data-toggle], .js-remove, .js-pick");
+      if (!t) return;
+      if (t.dataset.toggle) { toggle(t.dataset.toggle); return; }
+      if (t.classList.contains("js-pick")) {
+        if (t.dataset.pick === "item") pickItem(t.dataset.id || "");
+        else if (t.dataset.pick === "block") pickBlock(t.dataset.id || "");
+        return;
+      }
+      if (t.classList.contains("js-remove")) {
+        const row = t.closest("tr");
+        if (!row) return;
+        const action = row.dataset.action;
+        if (action === "removeItem") removeItem(row.dataset.id || "", row.dataset.nbt || "");
+        else if (action === "removeBlock") removeBlock(row.dataset.id || "", row.dataset.nbt || "");
+        else if (action === "removeExclude") removeExclude(row.dataset.id || "");
+        else if (action === "removeAccount") removeAccount(row.dataset.username || "");
+        return;
+      }
+      const cmd = t.dataset.cmd;
+      if (cmd === "login") login();
+      else if (cmd === "logout") logout();
+      else if (cmd === "saveSetupPassword") saveSetupPassword();
+      else if (cmd === "addItem") addItem();
+      else if (cmd === "addBlock") addBlock();
+      else if (cmd === "addExclude") addExclude();
+      else if (cmd === "registerAccount") registerAccount();
+      else if (cmd === "reloadCfg") reloadCfg();
+      else if (cmd === "loadLogs") loadLogs();
+    });
+    async function boot(){
+      document.body.classList.remove("is-auth");
+      document.body.classList.add("is-app");
+      $("login").classList.add("hidden"); $("setup").classList.add("hidden"); $("app").classList.remove("hidden"); $("logoutBtn").classList.remove("hidden");
+      pinThemeBtn();
+      const cat = await api("/api/catalog");
+      catalogItems = cat.items||[]; catalogBlocks = cat.blocks||[];
+      bindSearch("itemSearch", "itemHits", ()=>catalogItems, "item");
+      bindSearch("blockSearch", "blockHits", ()=>catalogBlocks, "block");
+      await refresh();
+      await loadLogs();
+    }
+    if (TOKEN && SETUP) showSetup();
+    else if (TOKEN) boot().catch(()=>{ sessionStorage.removeItem("itemban_token"); sessionStorage.removeItem("itemban_setup"); });
+  </script>
+</body>
+</html>

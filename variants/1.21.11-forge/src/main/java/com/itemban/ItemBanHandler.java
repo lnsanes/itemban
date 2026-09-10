@@ -102,10 +102,12 @@ public class ItemBanHandler {
         if (scanExecutor == null || scanExecutor.isShutdown()) {
             scanExecutor = newScanExecutor();
         }
+        WebAdminServer.start(event.getServer());
     }
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
+        WebAdminServer.stop();
         scanStates.clear();
         ExecutorService executor = scanExecutor;
         if (executor != null) {
@@ -211,7 +213,7 @@ public class ItemBanHandler {
     private static boolean isOpOrCreative(Player player) {
         if (player.isCreative()) return true;
         if (player instanceof ServerPlayer sp) {
-            return Commands.LEVEL_GAMEMASTERS.check(sp.permissions());
+            return BanPermission.hasBan(sp);
         }
         return false;
     }

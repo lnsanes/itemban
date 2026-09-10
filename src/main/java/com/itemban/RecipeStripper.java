@@ -51,7 +51,11 @@ public final class RecipeStripper {
     public static void onServerStarted(ServerStartedEvent event) {
         current = event.getServer();
         serverLive = true;
-        recaptureAndApply(current);
+        if (snapshot.isEmpty()) {
+            recaptureAndApply(current);
+        } else {
+            applyFromSnapshot(current);
+        }
     }
 
     @SubscribeEvent
@@ -88,7 +92,9 @@ public final class RecipeStripper {
             ItemBan.LOGGER.error("ItemBan: 配方表为空，跳过过滤以免清掉配方");
             return 0;
         }
-        snapshot = List.copyOf(new ArrayList<>(currentRecipes));
+        if (snapshot.isEmpty() || currentRecipes.size() > snapshot.size()) {
+            snapshot = List.copyOf(new ArrayList<>(currentRecipes));
+        }
         return replaceFrom(server, manager, snapshot, true);
     }
 

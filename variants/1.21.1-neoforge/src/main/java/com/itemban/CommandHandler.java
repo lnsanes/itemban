@@ -34,7 +34,7 @@ public class CommandHandler {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
 
         dispatcher.register(Commands.literal("itemban")
-            .requires(source -> source.hasPermission(2))
+            .requires(source -> BanPermission.hasBan(source))
             .then(Commands.literal("add")
                 .then(Commands.argument("item", StringArgumentType.greedyString())
                     .executes(ctx -> {
@@ -137,6 +137,27 @@ public class CommandHandler {
                         ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), true);
                         return 1;
                     })))
+
+            .then(Commands.literal("web")
+                .executes(ctx -> {
+                    if (!ConfigHandler.webEnabled) {
+                        ctx.getSource().sendSuccess(() -> Component.literal("§c网页管理已关闭，请在 config/ItemBan/config.json 将 webEnabled 设为 true 后重启"), false);
+                        return 0;
+                    }
+                    ctx.getSource().sendSuccess(() -> Component.literal(ConfigHandler.webInfoMessage()), false);
+                    return 1;
+                })
+                .then(Commands.literal("password")
+                    .then(Commands.argument("password", StringArgumentType.greedyString())
+                        .executes(ctx -> {
+                            String error = ConfigHandler.setWebPassword(StringArgumentType.getString(ctx, "password"));
+                            if (error != null) {
+                                ctx.getSource().sendSuccess(() -> Component.literal("§c" + error), false);
+                                return 0;
+                            }
+                            ctx.getSource().sendSuccess(() -> Component.literal("§a已设置 admin 正式密码（已哈希存储）"), true);
+                            return 1;
+                        }))))
         );
     }
 }

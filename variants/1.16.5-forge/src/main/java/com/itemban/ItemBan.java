@@ -22,6 +22,7 @@ public class ItemBan {
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
+        BanPermission.registerNode();
         LOGGER.info("ItemBan mod initialized for 1.16.5");
     }
 }

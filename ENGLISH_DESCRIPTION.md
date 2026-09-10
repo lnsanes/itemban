@@ -1,53 +1,64 @@
 # ItemBan - English Mod Description
 
-## Short Summary (for mod lists)
+## Short Summary (for mod lists, max ~250 characters)
 
-A lightweight server-side Forge mod for Minecraft 1.20.1 that lets administrators blacklist items. Blacklisted items have their recipes removed and are automatically deleted from player inventories, containers, and when dropped. Fully compatible with AE2, Create, Sophisticated Backpacks, Storage Drawers, and most other storage mods. Creative mode and OP players are exempt. Manage the blacklist with simple commands.
+Server-side item & block blacklist (NBT). Strips recipes and auto-removes banned content from inventories, containers, frames, drops and the world. Web admin on port 25580. Permission `itemban.ban`. Clients not required.
 
 ## Full Description
 
-**ItemBan** is a powerful yet lightweight server-side only mod designed for Minecraft 1.20.1 (Forge). It gives server owners complete control over which items are allowed in the world.
+**ItemBan** is a lightweight **server-side only** Minecraft mod. It gives server owners precise control over which items and blocks are allowed. Clients do **not** need to install it.
 
 ### Key Features
 
-- **Recipe Removal**: All crafting, smelting, and other recipes for blacklisted items are stripped at load time.
-- **Automatic Deletion**: Blacklisted items are instantly removed from:
-  - Player inventories (including hotbar and offhand)
-  - Any container (chests, AE2 terminals, Create depots, Sophisticated Backpacks, drawers, etc.)
-  - Item entities when dropped
-- **Wide Compatibility**: Works seamlessly with popular storage and automation mods including Applied Energistics 2, Create, Sophisticated Backpacks, Storage Drawers, and any mod using standard containers.
-- **Permission System**: Players in Creative mode or with OP level 2+ are completely exempt from item removal.
-- **Easy Management**: Use four simple commands to add, remove, list, or reload the blacklist on the fly.
-- **Configuration**: Blacklist is stored in a clean JSON file (`config/ItemBan/blacklist.json`) that supports any item ID in `modid:item` format.
-- **Logging**: Daily log files are written to `logs/ItemBan/` for auditing.
+- **Recipe removal**: recipes whose result is a blacklisted item are stripped from the server recipe table (crafting, smelting, stonecutting, smithing, and other types in that table). Unbanning restores them from a datapack snapshot.
+- **Automatic deletion** from player inventories, opened containers, item frames, dropped items, and (optionally) world blocks. Compatible with AE2, Create, Sophisticated Backpacks, Storage Drawers, and other standard containers.
+- **NBT / SNBT rules**: ban a whole ID, or only stacks / blocks that match part of an NBT compound.
+- **Web admin** (default `http://<server-ip>:25580`): item/block blacklist, audit exclusions, feature toggles, Chinese names, logs, and account management. Passwords are stored as PBKDF2 hashes. First login uses a one-time password from the log or `/itemban web`.
+- **Chat announcements** and optional auto-ban (native ban list, with LnsanesBan cascade when that mod is present).
+- **Audit logs** in `logs/ItemBan/` (IDs can be excluded from the log while still being removed).
+- **Permission node** `itemban.ban` (granted to OP level 2 by default; console always allowed). Creative mode or holders of that node are exempt from scans.
 
 ### Commands
 
-- `/itemban add <item_id>` — Add an item to the blacklist
-- `/itemban remove <item_id>` — Remove an item from the blacklist
-- `/itemban list` — Display the current blacklist
-- `/itemban reload` — Reload the blacklist from disk
+All in-game commands require **`itemban.ban`**:
 
-All commands require permission level 2 (OP).
+| Command | Description |
+|---------|-------------|
+| `/itemban add/remove/list` | Item blacklist (optional `{nbt}`) |
+| `/itemban reload` | Reload configs and rebuild recipes |
+| `/itemban announce on/off` | Chat announcements |
+| `/itemban autoban on/off` | Auto-ban on violation |
+| `/itemban dropdetect on/off` | Area scan vs instant drop intercept |
+| `/itemban blockscan on/off` | World block scanning |
+| `/itemban block add/remove/list` | Separate block blacklist |
+| `/itemban logexclude add/remove/list` | Audit exclusion list |
+| `/itemban web` | Show the web panel URL (and one-time password if needed) |
+| `/itemban web password <password>` | Set the admin password (hashed) |
 
-### Use Cases
+### Supported versions
 
-- Prevent players from obtaining overpowered or griefing items
-- Disable specific Create contraptions or AE2 components on your server
-- Create custom progression by locking certain items behind permissions
-- Maintain a controlled economy by banning high-value items
+| Minecraft | Loader |
+|-----------|--------|
+| 1.16.5 | Forge |
+| 1.18.2 | Forge |
+| 1.19.2 | Forge |
+| 1.20.1 | Forge |
+| 1.21.1 | Forge / NeoForge |
+| 1.21.11 | Forge / NeoForge |
+| 26.1.2 | Forge / NeoForge |
 
-### Technical Details
+Download the jar that matches your server game version and loader from [GitHub Releases](https://github.com/lnsanes/itemban/releases).
 
-- Pure server-side mod — clients do not need to install anything
-- Extremely lightweight with inventory scanning throttled to every 10 ticks
-- Safe for use on large public servers
+### Configuration
 
----
+Created under `config/ItemBan/`:
 
-**Version**: 1.0.0  
-**Minecraft**: 1.20.1  
-**Forge**: 47.3.0+  
-**License**: All Rights Reserved
+- `blacklist.json` — item blacklist
+- `block_blacklist.json` — block blacklist
+- `config.json` — feature toggles, web port, hashed web accounts
 
-This mod is ideal for any server owner who wants fine-grained control over item availability without heavy performance impact.
+### License / author
+
+Apache License 2.0 · **lnsanes** · [github.com/lnsanes/itemban](https://github.com/lnsanes/itemban)
+
+**Version**: 2.1.0

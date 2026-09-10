@@ -1,14 +1,14 @@
 # ItemBan 模组使用说明
 
-**版本**：2.0.0  
-**适用游戏版本**：Minecraft 1.20.1 (Forge 47.3.0+)  
+**版本**：2.1.0  
+**适用游戏版本**：Minecraft 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21.1 / 1.21.11 / 26.1.2（Forge；1.21.1 起另有 NeoForge）  
 **模组类型**：服务端模组（客户端无需安装）
 
 ---
 
 ## 1. 安装方法
 
-1. 将编译后的 `ItemBan-1.0.0.jar` 文件放入服务器或单人游戏的 `mods` 文件夹。
+1. 从 [GitHub Releases](https://github.com/lnsanes/itemban/releases) 下载对应游戏版本的 `ItemBan-2.1.0-<版本>-<加载器>.jar`，放入服务端 `mods` 文件夹。
 2. 重启游戏/服务器。
 3. 配置文件会自动生成于 `config/ItemBan/blacklist.json`。
 
@@ -66,9 +66,24 @@
 ```json
 {
   "publicAnnounce": true,
-  "autoBanOnViolation": false
+  "autoBanOnViolation": false,
+  "webEnabled": true,
+  "webPort": 25580,
+  "webAccounts": []
 }
 ```
+
+### 网页可视化管理
+
+服务端启动后会监听 **25580** 端口（可在 `config.json` 的 `webPort` / `webEnabled` 修改）。
+
+1. 浏览器打开 `http://<服务器IP>:25580`
+2. 首次启动会生成 **一次性密码**（默认账号 `admin`），写在服务端日志里，也可用 `/itemban web` 查看。该密码只能登录一次，登录后必须立刻设置正式密码
+3. 用 `/itemban web password <新密码>` 也可直接设置 admin 正式密码
+4. 登录后，**admin** 或权限为 **owner** 的账号可在「账号管理」里注册/删除网页账号（不能删除 `admin`）
+5. 可管理：物品黑名单、方块黑名单、审计排除、公示/自动封禁/掉落检测/方块扫描、重载配方，以及带中文名的搜索与日志
+
+配置里只保存 `webAccounts`（用户名、密码哈希、角色），不会保存登录密码明文。一次性密码只存在内存，不会写入配置。登录成功后浏览器拿到的是短期会话令牌。
 
 **公示消息示例**：
 
@@ -80,11 +95,9 @@
 
 ## 3. 指令系统
 
-所有指令需要 **权限等级 2**（即 OP 权限）才能执行。
+所有指令需要权限节点 **`itemban.ban`**（Forge 权限节点，默认 OP 等级 2 拥有；LuckPerms 等可单独授予）。控制台无需该节点。
 
-**注意**：在单人游戏中，您需要先使用 `/op <你的玩家名>` 给自己 OP 权限，或者在 `ops.json` 中添加自己。
-
-如果您是创造模式玩家但没有 OP，指令仍会因为权限不足而失败。
+**注意**：在单人游戏中，OP 默认已有 `itemban.ban`。也可用 LuckPerms 把该节点授予非 OP 管理员。
 
 ### 可用指令
 
@@ -106,6 +119,8 @@
 | `/itemban logexclude add <物品ID>` | 将物品加入审计排除列表（不记录日志） | `/itemban logexclude add minecraft:diamond` |
 | `/itemban logexclude remove <物品ID>` | 从审计排除列表移除物品 | `/itemban logexclude remove minecraft:diamond` |
 | `/itemban logexclude list` | 查看当前审计排除列表 | `/itemban logexclude list` |
+| `/itemban web` | 显示网页管理地址；未设正式密码时显示一次性密码 | `/itemban web` |
+| `/itemban web password <密码>` | 设置 admin 正式密码（哈希存储） | `/itemban web password 新密码` |
 
 ### 环境扫描功能（自动触发）
 
@@ -160,8 +175,8 @@
 
 ### 指令权限
 
-- 默认需要 OP（权限等级 2）
-- 创造模式玩家不受黑名单限制（物品不会被删除）
+- 默认需要权限节点 `itemban.ban`（OP 等级 2 默认拥有）
+- 创造模式或拥有 `itemban.ban` 的玩家不受黑名单限制（物品不会被删除）
 - 普通玩家进入黑名单物品后，物品会被立即删除
 
 ---
@@ -187,7 +202,7 @@
 以下情况的玩家**不会**被删除黑名单物品：
 
 - 创造模式玩家
-- 拥有 OP 权限（权限等级 ≥ 2）的玩家
+- 拥有权限节点 `itemban.ban` 的玩家（默认含 OP 等级 ≥ 2）
 
 ---
 
@@ -225,7 +240,7 @@ A: 给予该玩家 OP 权限或切换至创造模式即可。
 
 ---
 
-**构建日期**：2026-05-16  
-**开发者**：ItemBan Team
+**构建日期**：2026-09-10  
+**开发者**：lnsanes
 
-如有问题，请提交 Issue 或联系服务器管理员。
+如有问题，请到 [GitHub Issues](https://github.com/lnsanes/itemban/issues) 反馈。

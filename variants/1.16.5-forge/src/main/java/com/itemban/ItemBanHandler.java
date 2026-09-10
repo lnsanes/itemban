@@ -143,10 +143,12 @@ public class ItemBanHandler {
         if (scanExecutor == null || scanExecutor.isShutdown()) {
             scanExecutor = newScanExecutor();
         }
+        WebAdminServer.start(event.getServer());
     }
 
     @SubscribeEvent
     public static void onServerStopping(FMLServerStoppingEvent event) {
+        WebAdminServer.stop();
         scanStates.clear();
         ExecutorService executor = scanExecutor;
         if (executor != null) {
@@ -259,10 +261,7 @@ public class ItemBanHandler {
 
     private static boolean isOpOrCreative(PlayerEntity player) {
         if (player.isCreative()) return true;
-        if (player instanceof ServerPlayerEntity) {
-            return player.hasPermissions(2);
-        }
-        return false;
+        return BanPermission.hasBan(player);
     }
 
     /** 格式化实体所在维度与方块坐标。 */

@@ -14,7 +14,12 @@ import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
 import java.util.*;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 
 public class ConfigHandler {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -50,6 +55,31 @@ public class ConfigHandler {
 
     /** 是否检测世界中的违禁方块，默认开启 */
     public static boolean detectWorldBlocks = true;
+
+    public static boolean webEnabled = true;
+    public static int webPort = 25580;
+    public static final String WEB_ADMIN = "admin";
+    public static final String WEB_ROLE_OWNER = "owner";
+    public static final String WEB_ROLE_USER = "user";
+    private static final List<WebAccount> webAccounts = new ArrayList<>();
+    /** 一次性初始密码，只存在内存里，用过即失效 */
+    private static volatile String generatedWebPassword = null;
+    private static volatile String generatedWebPasswordHash = null;
+    private static final int PBKDF2_ITERATIONS = 120000;
+
+    public static class WebAccount {
+        public String username;
+        public String passwordHash;
+        public String role;
+
+        public WebAccount() {}
+
+        WebAccount(String username, String passwordHash, String role) {
+            this.username = username;
+            this.passwordHash = passwordHash;
+            this.role = role;
+        }
+    }
 
     public static class BlacklistRule {
         public String id;
@@ -232,6 +262,14 @@ public class ConfigHandler {
                     if (config.containsKey("detectWorldBlocks")) {
                         detectWorldBlocks = (Boolean) config.get("detectWorldBlocks");
                     }
+                    if (config.containsKey("webEnabled")) {
+                        webEnabled = (Boolean) config.get("webEnabled");
+                    }
+                    if (config.containsKey("webPort") && config.get("webPort") instanceof Number) {
+                        webPort = ((Number) config.get("webPort")).intValue();
+                    }
+                    applyWebAuthFromConfig(config);
+
                 }
             } else {
                 saveConfig();
@@ -249,6 +287,9 @@ public class ConfigHandler {
             config.put("excludeFromLog", new ArrayList<>(excludeFromLog));
             config.put("detectDroppedItems", detectDroppedItems);
             config.put("detectWorldBlocks", detectWorldBlocks);
+            config.put("webEnabled", webEnabled);
+            config.put("webPort", webPort);
+            config.put("webAccounts", webAccountsForSave());
             String json = GSON.toJson(config);
             Files.writeString(CONFIG_FILE, json);
         } catch (IOException e) {
@@ -536,4 +577,387 @@ public class ConfigHandler {
         }
         return false;
     }
+
+    private static List<Map<String, String>> webAccountsForSave() {
+        List<Map<String, String>> out = new ArrayList<>();
+        for (WebAccount account : webAccounts) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("username", account.username);
+            row.put("passwordHash", account.passwordHash);
+            row.put("role", account.role);
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static void applyWebAuthFromConfig(Map<String, Object> config) {
+        List<WebAccount> loaded = new ArrayList<>();
+        Object listObj = config.get("webAccounts");
+        if (listObj instanceof List) {
+            for (Object row : (List<?>) listObj) {
+                if (!(row instanceof Map)) {
+                    continue;
+                }
+                Map<?, ?> map = (Map<?, ?>) row;
+                String user = mapStr(map.get("username"));
+                String hash = mapStr(map.get("passwordHash"));
+                String role = normalizeRole(mapStr(map.get("role")));
+                if (user.isEmpty() || hash.isEmpty()) {
+                    continue;
+                }
+                if (WEB_ADMIN.equalsIgnoreCase(user)) {
+                    user = WEB_ADMIN;
+                    role = WEB_ROLE_OWNER;
+                }
+                loaded.add(new WebAccount(user, hash, role));
+            }
+        }
+        boolean rewritten = false;
+        if (loaded.isEmpty()) {
+            String legacyHash = mapStr(config.get("webPasswordHash"));
+            if (!legacyHash.isEmpty()) {
+                generatedWebPasswordHash = legacyHash;
+                rewritten = true;
+            }
+        }
+        webAccounts.clear();
+        webAccounts.addAll(loaded);
+        Object plain = config.get("webPassword");
+        if (plain != null) {
+            String password = String.valueOf(plain);
+            if (!password.isEmpty() && !"null".equals(password)) {
+                upsertAccount(WEB_ADMIN, password, WEB_ROLE_OWNER);
+                burnSetupPassword();
+                rewritten = true;
+            }
+        }
+        if (rewritten) {
+            WebAdminServer.invalidateSessions();
+            saveConfig();
+        }
+    }
+
+    private static String mapStr(Object v) {
+        return v == null ? "" : String.valueOf(v).trim();
+    }
+
+    public static synchronized void ensureWebCredentials() {
+        if (hasPermanentPassword()) {
+            return;
+        }
+        if (generatedWebPasswordHash != null && !generatedWebPasswordHash.isEmpty()) {
+            return;
+        }
+        generatedWebPassword = randomToken();
+        generatedWebPasswordHash = hashPassword(generatedWebPassword);
+        ItemBan.LOGGER.warn("ItemBan 网页管理一次性密码（账号 {}）：{} 。登录后立即失效，必须设置正式密码。",
+                WEB_ADMIN, generatedWebPassword);
+    }
+
+    private static boolean hasPermanentPassword() {
+        for (WebAccount account : webAccounts) {
+            if (account.passwordHash != null && !account.passwordHash.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static synchronized boolean hasPermanentWebPassword() {
+        return hasPermanentPassword();
+    }
+
+    public static String webInfoMessage() {
+        ensureWebCredentials();
+        StringBuilder sb = new StringBuilder();
+        sb.append("§aItemBan 网页管理\n");
+        sb.append("§f地址: http://<服务器IP>:").append(webPort).append("\n");
+        sb.append("§f系统账号: ").append(WEB_ADMIN).append("（owner）\n");
+        if (!hasPermanentPassword() && generatedWebPassword != null) {
+            sb.append("§e一次性密码: ").append(generatedWebPassword).append("\n");
+            sb.append("§7用后即失效，登录后必须设置正式密码\n");
+        } else {
+            sb.append("§7已有正式账号，密码以哈希存储\n");
+        }
+        sb.append("§7只有 admin 或 owner 可注册/删除网页账号\n");
+        sb.append("§7重置 admin 密码: /itemban web password <新密码>");
+        return sb.toString();
+    }
+
+    public static synchronized String setWebPassword(String password) {
+        String error = validatePassword(password);
+        if (error != null) {
+            return error;
+        }
+        upsertAccount(WEB_ADMIN, password, WEB_ROLE_OWNER);
+        burnSetupPassword();
+        saveConfig();
+        WebAdminServer.invalidateSessions();
+        return null;
+    }
+
+    public static class WebLoginResult {
+        public final boolean ok;
+        public final boolean setupOnly;
+        public final String username;
+        public final String role;
+
+        WebLoginResult(boolean ok, boolean setupOnly, String username, String role) {
+            this.ok = ok;
+            this.setupOnly = setupOnly;
+            this.username = username;
+            this.role = role;
+        }
+    }
+
+    public static synchronized WebLoginResult authenticateWeb(String username, String password) {
+        ensureWebCredentials();
+        String user = username == null ? "" : username.trim();
+        String pass = password == null ? "" : password;
+        if (user.length() > 64 || pass.length() > 256) {
+            dummyPbkdf2("x");
+            return new WebLoginResult(false, false, "", "");
+        }
+        if (!hasPermanentPassword() && WEB_ADMIN.equals(user)) {
+            boolean passOk = verifyPassword(pass, generatedWebPasswordHash);
+            if (passOk) {
+                burnSetupPassword();
+                return new WebLoginResult(true, true, WEB_ADMIN, WEB_ROLE_OWNER);
+            }
+            return new WebLoginResult(false, false, "", "");
+        }
+        WebAccount account = findAccount(user);
+        boolean userOk = account != null;
+        boolean passOk = verifyPassword(pass, account == null ? "" : account.passwordHash);
+        if (!(userOk & passOk)) {
+            return new WebLoginResult(false, false, "", "");
+        }
+        return new WebLoginResult(true, false, account.username, account.role);
+    }
+
+    public static boolean canManageAccounts(String username, String role) {
+        return WEB_ADMIN.equals(username) || WEB_ROLE_OWNER.equals(role);
+    }
+
+    public static synchronized List<Map<String, String>> listWebAccounts() {
+        List<Map<String, String>> out = new ArrayList<>();
+        for (WebAccount account : webAccounts) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("username", account.username);
+            row.put("role", account.role);
+            out.add(row);
+        }
+        if (out.isEmpty()) {
+            Map<String, String> admin = new LinkedHashMap<>();
+            admin.put("username", WEB_ADMIN);
+            admin.put("role", WEB_ROLE_OWNER);
+            out.add(admin);
+        }
+        return out;
+    }
+
+    public static synchronized String registerWebAccount(String actor, String actorRole, String username, String password, String role) {
+        if (!canManageAccounts(actor, actorRole)) {
+            return "只有 admin 或 owner 可以注册账号";
+        }
+        String user = username == null ? "" : username.trim();
+        if (!user.matches("[A-Za-z0-9_]{2,32}")) {
+            return "账号只能是 2-32 位字母、数字或下划线";
+        }
+        if (WEB_ADMIN.equalsIgnoreCase(user)) {
+            return "admin 为系统账号，不能重复注册";
+        }
+        if (findAccountIgnoreCase(user) != null) {
+            return "账号已存在";
+        }
+        String error = validatePassword(password);
+        if (error != null) {
+            return error;
+        }
+        String normalized = normalizeRole(role);
+        if (WEB_ROLE_OWNER.equals(normalized) && !WEB_ADMIN.equalsIgnoreCase(actor)) {
+            return "只有 admin 可以注册 owner 账号";
+        }
+        webAccounts.add(new WebAccount(user, hashPassword(password), normalized));
+        saveConfig();
+        return null;
+    }
+
+    public static synchronized String deleteWebAccount(String actor, String actorRole, String username) {
+        if (!canManageAccounts(actor, actorRole)) {
+            return "只有 admin 或 owner 可以删除账号";
+        }
+        String user = username == null ? "" : username.trim();
+        if (WEB_ADMIN.equalsIgnoreCase(user)) {
+            return "不能删除系统账号 admin";
+        }
+        if (user.equalsIgnoreCase(actor)) {
+            return "不能删除当前登录账号";
+        }
+        WebAccount account = findAccount(user);
+        if (account == null) {
+            return "账号不存在";
+        }
+        if (WEB_ROLE_OWNER.equals(account.role) && !WEB_ADMIN.equalsIgnoreCase(actor)) {
+            return "只有 admin 可以删除 owner 账号";
+        }
+        webAccounts.remove(account);
+        saveConfig();
+        WebAdminServer.invalidateUserSessions(user);
+        return null;
+    }
+
+    public static synchronized String completeWebSetup(String password) {
+        return setWebPassword(password);
+    }
+
+    public static synchronized String changeOwnPassword(String username, String password) {
+        String error = validatePassword(password);
+        if (error != null) {
+            return error;
+        }
+        WebAccount account = findAccount(username);
+        if (account == null) {
+            if (WEB_ADMIN.equals(username)) {
+                return setWebPassword(password);
+            }
+            return "账号不存在";
+        }
+        account.passwordHash = hashPassword(password);
+        if (WEB_ADMIN.equals(account.username)) {
+            account.role = WEB_ROLE_OWNER;
+        }
+        saveConfig();
+        WebAdminServer.invalidateUserSessions(username);
+        return null;
+    }
+
+    private static String validatePassword(String password) {
+        if (password == null || password.isEmpty()) {
+            return "密码不能为空";
+        }
+        if (password.length() > 256) {
+            return "密码过长";
+        }
+        if (password.length() < 8) {
+            return "密码至少 8 个字符";
+        }
+        return null;
+    }
+
+    private static String normalizeRole(String role) {
+        return WEB_ROLE_OWNER.equalsIgnoreCase(role) ? WEB_ROLE_OWNER : WEB_ROLE_USER;
+    }
+
+    private static WebAccount findAccount(String username) {
+        for (WebAccount account : webAccounts) {
+            if (account.username.equals(username)) {
+                return account;
+            }
+        }
+        return null;
+    }
+
+    private static WebAccount findAccountIgnoreCase(String username) {
+        for (WebAccount account : webAccounts) {
+            if (account.username.equalsIgnoreCase(username)) {
+                return account;
+            }
+        }
+        return null;
+    }
+
+    private static void upsertAccount(String username, String password, String role) {
+        WebAccount account = findAccountIgnoreCase(username);
+        String hash = hashPassword(password);
+        String normalized = WEB_ADMIN.equalsIgnoreCase(username) ? WEB_ROLE_OWNER : normalizeRole(role);
+        String name = WEB_ADMIN.equalsIgnoreCase(username) ? WEB_ADMIN : username;
+        if (account == null) {
+            webAccounts.add(new WebAccount(name, hash, normalized));
+        } else {
+            account.username = name;
+            account.passwordHash = hash;
+            account.role = normalized;
+        }
+    }
+
+    private static void burnSetupPassword() {
+        generatedWebPassword = null;
+        generatedWebPasswordHash = null;
+    }
+
+    private static String hashPassword(String password) {
+        byte[] salt = new byte[16];
+        new SecureRandom().nextBytes(salt);
+        byte[] dk = pbkdf2(password, salt, PBKDF2_ITERATIONS);
+        return "pbkdf2$" + PBKDF2_ITERATIONS + "$" + b64(salt) + "$" + b64(dk);
+    }
+
+    private static boolean verifyPassword(String password, String stored) {
+        if (stored == null || stored.isEmpty()) {
+            dummyPbkdf2(password);
+            return false;
+        }
+        String[] parts = stored.split("\\$", 4);
+        if (parts.length != 4 || !"pbkdf2".equals(parts[0])) {
+            dummyPbkdf2(password);
+            return false;
+        }
+        int iterations;
+        try {
+            iterations = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            dummyPbkdf2(password);
+            return false;
+        }
+        if (iterations < 10_000 || iterations > 200_000) {
+            dummyPbkdf2(password);
+            return false;
+        }
+        byte[] salt;
+        byte[] expected;
+        try {
+            salt = Base64.getDecoder().decode(parts[2]);
+            expected = Base64.getDecoder().decode(parts[3]);
+        } catch (IllegalArgumentException e) {
+            dummyPbkdf2(password);
+            return false;
+        }
+        byte[] actual = pbkdf2(password, salt, iterations);
+        return MessageDigest.isEqual(expected, actual);
+    }
+
+    private static void dummyPbkdf2(String password) {
+        pbkdf2(password, new byte[16], PBKDF2_ITERATIONS);
+    }
+
+    private static byte[] pbkdf2(String password, byte[] salt, int iterations) {
+        try {
+            char[] chars = password.toCharArray();
+            try {
+                KeySpec spec = new PBEKeySpec(chars, salt, iterations, 256);
+                return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded();
+            } finally {
+                Arrays.fill(chars, '\0');
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("无法计算网页密码哈希", e);
+        }
+    }
+
+    private static String b64(byte[] data) {
+        return Base64.getEncoder().encodeToString(data);
+    }
+
+    private static String randomToken() {
+        SecureRandom random = new SecureRandom();
+        byte[] bytes = new byte[9];
+        random.nextBytes(bytes);
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
 }
