@@ -34,17 +34,38 @@ A Minecraft mod that blacklists items: banned-item recipes are stripped, matchin
 
 仓库根目录是 **Minecraft 1.20.1 Forge** 的源码（2.2.0）。其它游戏版本 / 加载器在 [`variants/`](variants/)。已编译的 jar 在 [`dist/`](dist/)。
 
+## 2.2.0 新功能
+
+全平台新增游戏内图形管理界面。封禁清理仍可只装服务端；普通玩家客户端不必安装。
+
+打开管理界面需要同时满足：
+
+- 拥有权限节点 `itemban.ban`
+- 客户端安装了与本服密钥匹配的管理模组
+- 游戏内执行 `/itemban gui`
+
+首次开服会生成本服专用密钥和管理模组：
+
+- 密钥文件：`config/ItemBan/admin-key.json`（之后重启沿用同一把密钥）
+- 管理模组：`config/ItemBan/admin-mods/ItemBan-Admin-*.jar`（复制到管理员客户端 `mods` 即可）
+- 客户端可同时放多个服的管理模组，进哪台服就用哪把密钥
+- 运行中执行 `/itemban adminmod` 可按当前密钥再生成；`/itemban adminmod regen` 会更换密钥，旧模组立即失效
+
+网页管理默认只监听本机 `127.0.0.1:25580`。若要从其它电脑访问，在 `config/ItemBan/config.json` 中设置 `"webBind": "0.0.0.0"`。首次会生成一次性密码（日志或 `/itemban web` 可见），登录后必须设置正式密码。网页 `user` 账号不能修改自动踢出，也不能管理账号。
+
+此版本同时将管理校验改为恒定时间比较，并在玩家断线后立即清除游戏内管理会话。
+
 ## 功能
 
 - 从服务端配方表移除产出为黑名单物品的配方（合成 / 熔炼 / 切石 / 锻造等）
 - 自动清除背包、容器、掉落物、展示框和世界方块中的违禁物品
 - 兼容 AE2、Create、精妙背包、抽屉等常见存储模组
 - 创造模式与拥有 `itemban.ban` 的玩家豁免
-- `/itemban` 指令、网页可视化管理（默认端口 25580）与游戏内 `/itemban gui`
+- `/itemban` 指令、网页可视化管理（默认只监听本机 25580 端口）与游戏内 `/itemban gui`
 - 开服随机密钥 + 仅匹配该服的管理模组（可热重载 / 运行中再生成；重启不换密钥）
 - 日志写到 `logs/ItemBan/`
 - 封禁清理可不装客户端；游戏内管理需要本体 + 该服管理模组
-- 配置文件：`config/ItemBan/blacklist.json`
+- 配置文件：`config/ItemBan/blacklist.json`、`config.json`、`admin-key.json`
 
 ## 指令
 
