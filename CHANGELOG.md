@@ -3,9 +3,9 @@
 ## [2.2.0] - 2026-09-18
 
 ### Added
-- 游戏内图形化管理：有 `itemban.ban` 且客户端装有**与本服密钥匹配的管理模组**时，用 `/itemban gui` 打开
-- 首次开服随机生成管理密钥（写入 `admin-key.json`，重启沿用），并写出 `config/ItemBan/admin-mods/ItemBan-Admin-<keyId>.jar`（含密钥，SHA-256 核对）
-- 运行中可用 `/itemban adminmod` 按当前密钥再生成管理模组；`/itemban adminmod regen` 热更换密钥并立即失效旧模组
+- 游戏内图形管理：拥有权限节点 `itemban.ban`，并且客户端安装了与本服匹配的管理模组后，执行 `/itemban gui` 即可打开
+- 首次开服会写入 `admin-key.json`（之后重启沿用同一把密钥），并在 `config/ItemBan/admin-mods/` 生成 `ItemBan-Admin-<keyId>.jar`
+- 运行中可用 `/itemban adminmod` 按当前密钥再生成管理模组；`/itemban adminmod regen` 会更换密钥并使旧模组立即失效
 - `/itemban reload` 会热重载 `admin-key.json` 中的密钥与哈希
 - 客户端可同时安装多个管理模组，进不同服时自动匹配对应密钥
 
