@@ -28,9 +28,15 @@ public final class AdminNetwork {
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
             new ResourceLocation(ItemBan.MODID, "admin"),
             () -> PROTO,
-            PROTO::equals,
-            PROTO::equals
+            AdminNetwork::acceptMissingOrProto,
+            AdminNetwork::acceptMissingOrProto
     );
+
+    private static boolean acceptMissingOrProto(String version) {
+        return PROTO.equals(version)
+                || NetworkRegistry.ABSENT.equals(version)
+                || NetworkRegistry.ACCEPTVANILLA.equals(version);
+    }
 
     private static final class Challenge {
         final byte[] nonce;

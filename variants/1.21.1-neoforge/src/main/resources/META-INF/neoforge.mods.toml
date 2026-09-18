@@ -9,6 +9,7 @@ version="${mod_version}"
 displayName="${mod_name}"
 authors="${mod_author}"
 description="${mod_description}"
+displayTest="IGNORE_ALL_VERSION"
 #logoFile="logo.png"
 
 [[dependencies.${mod_id}]]

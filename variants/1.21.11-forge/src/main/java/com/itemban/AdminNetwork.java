@@ -26,6 +26,7 @@ public final class AdminNetwork {
     public static final SimpleChannel CHANNEL = ChannelBuilder
             .named(Identifier.fromNamespaceAndPath(ItemBan.MODID, "admin"))
             .networkProtocolVersion(1)
+            .optional()
             .simpleChannel();
 
     private record Challenge(byte[] nonce, long expiresAt) {}

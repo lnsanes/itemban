@@ -30,7 +30,7 @@ public final class AdminNetwork {
     }
 
     public static void registerPayloads(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar("1");
+        PayloadRegistrar registrar = event.registrar("1").optional();
         registrar.playToClient(ChallengeS2C.TYPE, ChallengeS2C.STREAM_CODEC, ChallengeS2C::handle);
         registrar.playToServer(ProofC2S.TYPE, ProofC2S.STREAM_CODEC, ProofC2S::handle);
         registrar.playToClient(OpenGuiS2C.TYPE, OpenGuiS2C.STREAM_CODEC, OpenGuiS2C::handle);
