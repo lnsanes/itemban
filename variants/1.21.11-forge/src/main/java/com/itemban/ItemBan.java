@@ -17,6 +17,7 @@ public class ItemBan {
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
+        AdminNetwork.register();
         LOGGER.info("ItemBan mod initialized for 1.21.11");
     }
 }

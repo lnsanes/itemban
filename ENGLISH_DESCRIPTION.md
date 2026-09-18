@@ -2,18 +2,19 @@
 
 ## Short Summary (for mod lists, max ~250 characters)
 
-Server-side item & block blacklist (NBT). Strips recipes and auto-removes banned content from inventories, containers, frames, drops and the world. Web admin on port 25580. Permission `itemban.ban`. Clients not required.
+Server-side item & block blacklist (NBT). Strips recipes and auto-removes banned content from inventories, containers, frames, drops and the world. Web admin on port 25580 and an in-game GUI (`/itemban gui` + per-server admin mod). Permission `itemban.ban`.
 
 ## Full Description
 
-**ItemBan** is a lightweight **server-side only** Minecraft mod. It gives server owners precise control over which items and blocks are allowed. Clients do **not** need to install it.
+**ItemBan** is a lightweight Minecraft mod for server owners. Ban cleanup can stay server-side only. The in-game GUI needs the ItemBan jar plus a per-server admin mod on the client.
 
 ### Key Features
 
 - **Recipe removal**: recipes whose result is a blacklisted item are stripped from the server recipe table (crafting, smelting, stonecutting, smithing, and other types in that table). Unbanning restores them from a datapack snapshot.
 - **Automatic deletion** from player inventories, opened containers, item frames, dropped items, and (optionally) world blocks. Compatible with AE2, Create, Sophisticated Backpacks, Storage Drawers, and other standard containers.
 - **NBT / SNBT rules**: ban a whole ID, or only stacks / blocks that match part of an NBT compound.
-- **Web admin** (default `http://<server-ip>:25580`): item/block blacklist, audit exclusions, feature toggles, Chinese names, logs, and account management. Passwords are stored as PBKDF2 hashes. First login uses a one-time password from the log or `/itemban web`.
+- **Web admin** (default `http://127.0.0.1:25580`): item/block blacklist, audit exclusions, feature toggles, Chinese names, logs, and account management. Passwords are stored as PBKDF2 hashes. First login uses a one-time password from the log or `/itemban web`. Bind `0.0.0.0` to expose it remotely.
+- **In-game GUI**: `/itemban gui` after installing the matching admin mod generated under `config/ItemBan/admin-mods/`.
 - **Chat announcements** and optional auto-ban (native ban list, with LnsanesBan cascade when that mod is present).
 - **Audit logs** in `logs/ItemBan/` (IDs can be excluded from the log while still being removed).
 - **Permission node** `itemban.ban` (granted to OP level 2 by default; console always allowed). Creative mode or holders of that node are exempt from scans.
@@ -32,6 +33,9 @@ All in-game commands require **`itemban.ban`**:
 | `/itemban blockscan on/off` | World block scanning |
 | `/itemban block add/remove/list` | Separate block blacklist |
 | `/itemban logexclude add/remove/list` | Audit exclusion list |
+| `/itemban gui` | Open the in-game admin UI (needs matching admin mod) |
+| `/itemban adminmod` | Generate the current server's admin mod |
+| `/itemban adminmod regen` | Rotate the admin key and write a new admin mod |
 | `/itemban web` | Show the web panel URL (and one-time password if needed) |
 | `/itemban web password <password>` | Set the admin password (hashed) |
 
@@ -61,4 +65,4 @@ Created under `config/ItemBan/`:
 
 Apache License 2.0 · **lnsanes** · [github.com/lnsanes/itemban](https://github.com/lnsanes/itemban)
 
-**Version**: 2.1.0
+**Version**: 2.2.0

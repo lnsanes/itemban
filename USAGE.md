@@ -1,18 +1,19 @@
 # ItemBan 模组使用说明
 
-**版本**：2.1.0  
+**版本**：2.2.0  
 **适用游戏版本**：Minecraft 1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21.1 / 1.21.11 / 26.1.2（Forge；1.21.1 起另有 NeoForge）  
-**模组类型**：服务端模组（客户端无需安装）
+**模组类型**：服务端封禁逻辑可不装客户端；**游戏内管理界面**需要客户端安装 ItemBan 本体 + 该服生成的管理模组
 
 ---
 
 ## 1. 安装方法
 
-1. 从 [GitHub Releases](https://github.com/lnsanes/itemban/releases) 下载对应游戏版本的 `ItemBan-2.1.0-<版本>-<加载器>.jar`，放入服务端 `mods` 文件夹。
-2. 重启游戏/服务器。
-3. 配置文件会自动生成于 `config/ItemBan/blacklist.json`。
+1. 从 [GitHub Releases](https://github.com/lnsanes/itemban/releases) 下载对应游戏版本的 `ItemBan-2.2.0-<版本>-<加载器>.jar`，放入服务端 `mods` 文件夹。
+2. 重启服务器。首次开服会随机生成管理密钥并写入 `config/ItemBan/admin-key.json`，之后重启**沿用同一把密钥**，并在 `config/ItemBan/admin-mods/` 写出仅匹配本服的管理模组。要换密钥请用 `/itemban adminmod regen`。
+3. 需要游戏内管理的人：客户端同时安装 **ItemBan 本体** 和该管理模组 jar（可同时放多个服的管理模组）。
+4. 配置文件会自动生成于 `config/ItemBan/blacklist.json`。
 
-> **提示**：本模组为纯服务端模组，客户端玩家无需安装即可正常游戏。
+> **提示**：普通玩家客户端仍可不装 ItemBan。只有要用 `/itemban gui` 的管理员才需要本体 + 管理模组。
 
 ---
 
@@ -69,21 +70,35 @@
   "autoBanOnViolation": false,
   "webEnabled": true,
   "webPort": 25580,
+  "webBind": "127.0.0.1",
   "webAccounts": []
 }
 ```
 
 ### 网页可视化管理
 
-服务端启动后会监听 **25580** 端口（可在 `config.json` 的 `webPort` / `webEnabled` 修改）。
+服务端启动后默认只在本机 **127.0.0.1:25580** 提供网页（可在 `config.json` 用 `webPort` / `webEnabled` / `webBind` 修改）。要从其它机器访问，把 `webBind` 设为 `0.0.0.0`。
 
-1. 浏览器打开 `http://<服务器IP>:25580`
+1. 本机打开 `http://127.0.0.1:25580`；若已绑定所有网卡，再用 `http://<服务器IP>:25580`
 2. 首次启动会生成 **一次性密码**（默认账号 `admin`），写在服务端日志里，也可用 `/itemban web` 查看。该密码只能登录一次，登录后必须立刻设置正式密码
 3. 用 `/itemban web password <新密码>` 也可直接设置 admin 正式密码
 4. 登录后，**admin** 或权限为 **owner** 的账号可在「账号管理」里注册/删除网页账号（不能删除 `admin`）
 5. 可管理：物品黑名单、方块黑名单、审计排除、公示/自动封禁/掉落检测/方块扫描、重载配方，以及带中文名的搜索与日志
 
 配置里只保存 `webAccounts`（用户名、密码哈希、角色），不会保存登录密码明文。一次性密码只存在内存，不会写入配置。登录成功后浏览器拿到的是短期会话令牌。
+
+### 游戏内图形化管理
+
+开服时若还没有密钥会随机生成并写出管理模组；之后重启沿用 `admin-key.json`。也可用指令在**服务器运行时**再生成：
+
+| 指令 | 说明 |
+|------|------|
+| `/itemban gui` | 打开图形界面（需 `itemban.ban` **并且**客户端有匹配本服密钥+哈希的管理模组） |
+| `/itemban adminmod` | 按**当前**密钥生成管理模组 jar |
+| `/itemban adminmod regen` | **热更换**新随机密钥并生成新 jar，旧管理模组立即失效 |
+| `/itemban reload` | 重载黑名单，并热重载 `config/ItemBan/admin-key.json` |
+
+管理模组路径：`config/ItemBan/admin-mods/ItemBan-Admin-<keyId>.jar`。把它复制到管理员客户端的 `mods` 文件夹。多个 jar 可共存，进哪台服就用哪把密钥。
 
 **公示消息示例**：
 
@@ -108,7 +123,10 @@
 | `/itemban remove <物品ID>` | 移除该物品的所有封禁规则 | `/itemban remove ae2:fluix_crystal` |
 | `/itemban remove <物品ID>{nbt}` | 精确移除指定 NBT 的规则 | `/itemban remove minecraft:diamond_sword{Enchantments:[{id:"minecraft:sharpness",lvl:5}]}` |
 | `/itemban list` | 查看当前黑名单列表 | `/itemban list` |
-| `/itemban reload` | 重新加载黑名单配置 | `/itemban reload` |
+| `/itemban reload` | 重新加载黑名单配置与管理密钥 | `/itemban reload` |
+| `/itemban gui` | 打开游戏内管理界面（需权限 + 匹配的管理模组） | `/itemban gui` |
+| `/itemban adminmod` | 按当前密钥生成管理模组 | `/itemban adminmod` |
+| `/itemban adminmod regen` | 热更换密钥并生成新管理模组 | `/itemban adminmod regen` |
 | `/itemban announce on/off` | 开启/关闭聊天栏公示功能 | `/itemban announce on` |
 | `/itemban autoban on/off` | 开启/关闭自动踢出功能 | `/itemban autoban off` |
 | `/itemban dropdetect on/off` | 开启/关闭掉落物检测（ItemEntity） | `/itemban dropdetect off` |

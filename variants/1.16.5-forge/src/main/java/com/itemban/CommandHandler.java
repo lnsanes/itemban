@@ -4,10 +4,13 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.Commands;
+import net.minecraft.entity.player.ServerPlayerEntity;
 import net.minecraft.util.text.StringTextComponent;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+
+import java.nio.file.Path;
 
 @Mod.EventBusSubscriber(modid = ItemBan.MODID)
 public class CommandHandler {
@@ -77,10 +80,45 @@ public class CommandHandler {
             .then(Commands.literal("reload")
                 .executes(ctx -> {
                     ConfigHandler.loadBlacklist();
+                    ConfigHandler.loadBlockBlacklist();
+                    ConfigHandler.loadConfig();
+                    AdminKeyManager.reloadFromDisk();
                     int stripped = RecipeStripper.applyFromSnapshot(ctx.getSource().getServer());
-                    ctx.getSource().sendSuccess(new StringTextComponent("黑名单已重载，已更新配方表（移除 " + stripped + " 条）"), true);
+                    ctx.getSource().sendSuccess(new StringTextComponent("黑名单与管理密钥已热重载，已更新配方表（移除 " + stripped + " 条）"), true);
                     return 1;
                 }))
+            .then(Commands.literal("gui")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getEntity() instanceof ServerPlayerEntity
+                            ? (ServerPlayerEntity) ctx.getSource().getEntity() : null;
+                    if (player == null) {
+                        ctx.getSource().sendSuccess(new StringTextComponent("§c请在游戏内使用 /itemban gui"), false);
+                        return 0;
+                    }
+                    AdminNetwork.requestOpen(player);
+                    ctx.getSource().sendSuccess(new StringTextComponent("§7正在核对管理模组密钥与哈希…"), false);
+                    return 1;
+                }))
+            .then(Commands.literal("adminmod")
+                .executes(ctx -> {
+                    Path jar = AdminKeyManager.writeModForCurrentKey();
+                    ctx.getSource().sendSuccess(new StringTextComponent(
+                            "§a已生成当前密钥的管理模组:\n§f" + jar.toAbsolutePath()
+                                    + "\n§7SHA-256: " + AdminKeyManager.jarSha256()
+                                    + "\n§7keyId=" + AdminKeyManager.keyId()
+                                    + " 把该 jar 放进客户端 mods，可与其它服的管理模组共存"), true);
+                    return 1;
+                })
+                .then(Commands.literal("regen")
+                    .executes(ctx -> {
+                        Path jar = AdminKeyManager.rotateAndWriteMod();
+                        ctx.getSource().sendSuccess(new StringTextComponent(
+                                "§a已热更换密钥并生成新管理模组:\n§f" + jar.toAbsolutePath()
+                                        + "\n§7SHA-256: " + AdminKeyManager.jarSha256()
+                                        + "\n§7keyId=" + AdminKeyManager.keyId()
+                                        + " 旧管理模组立即失效"), true);
+                        return 1;
+                    })))
             .then(Commands.literal("announce")
                 .then(Commands.literal("on")
                     .executes(ctx -> {

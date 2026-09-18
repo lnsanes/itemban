@@ -39,7 +39,7 @@ public final class BanHelper {
 
         String banReason = reason == null || reason.trim().isEmpty()
                 ? "Banned by ItemBan."
-                : reason;
+                : reason.replace('\n', ' ').replace('\r', ' ');
 
         try {
             if (!player.hasDisconnected()) {

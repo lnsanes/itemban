@@ -1,5 +1,9 @@
 package com.itemban;
 
+import java.nio.file.Path;
+
+import net.minecraft.server.level.ServerPlayer;
+
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.commands.CommandSourceStack;
@@ -77,10 +81,44 @@ public class CommandHandler {
             .then(Commands.literal("reload")
                 .executes(ctx -> {
                     ConfigHandler.loadBlacklist();
+                    ConfigHandler.loadBlockBlacklist();
+                    ConfigHandler.loadConfig();
+                    AdminKeyManager.reloadFromDisk();
                     int stripped = RecipeStripper.applyFromSnapshot(ctx.getSource().getServer());
-                    ctx.getSource().sendSuccess(Component.literal("黑名单已重载，已更新配方表（移除 " + stripped + " 条）"), true);
+                    ctx.getSource().sendSuccess(Component.literal("黑名单与管理密钥已热重载，已更新配方表（移除 " + stripped + " 条）"), true);
                     return 1;
                 }))
+            .then(Commands.literal("gui")
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getEntity() instanceof ServerPlayer p ? p : null;
+                    if (player == null) {
+                        ctx.getSource().sendSuccess(Component.literal("§c请在游戏内使用 /itemban gui"), false);
+                        return 0;
+                    }
+                    AdminNetwork.requestOpen(player);
+                    ctx.getSource().sendSuccess(Component.literal("§7正在核对管理模组密钥与哈希…"), false);
+                    return 1;
+                }))
+            .then(Commands.literal("adminmod")
+                .executes(ctx -> {
+                    Path jar = AdminKeyManager.writeModForCurrentKey();
+                    ctx.getSource().sendSuccess(Component.literal(
+                            "§a已生成当前密钥的管理模组:\n§f" + jar.toAbsolutePath()
+                                    + "\n§7SHA-256: " + AdminKeyManager.jarSha256()
+                                    + "\n§7keyId=" + AdminKeyManager.keyId()
+                                    + " 把该 jar 放进客户端 mods，可与其它服的管理模组共存"), true);
+                    return 1;
+                })
+                .then(Commands.literal("regen")
+                    .executes(ctx -> {
+                        Path jar = AdminKeyManager.rotateAndWriteMod();
+                        ctx.getSource().sendSuccess(Component.literal(
+                                "§a已热更换密钥并生成新管理模组:\n§f" + jar.toAbsolutePath()
+                                        + "\n§7SHA-256: " + AdminKeyManager.jarSha256()
+                                        + "\n§7keyId=" + AdminKeyManager.keyId()
+                                        + " 旧管理模组立即失效"), true);
+                        return 1;
+                    })))
             .then(Commands.literal("announce")
                 .then(Commands.literal("on")
                     .executes(ctx -> {

@@ -1,5 +1,22 @@
 # ItemBan Changelog
 
+## [2.2.0] - 2026-09-18
+
+### Added
+- 游戏内图形化管理：有 `itemban.ban` 且客户端装有**与本服密钥匹配的管理模组**时，用 `/itemban gui` 打开
+- 首次开服随机生成管理密钥（写入 `admin-key.json`，重启沿用），并写出 `config/ItemBan/admin-mods/ItemBan-Admin-<keyId>.jar`（含密钥，SHA-256 核对）
+- 运行中可用 `/itemban adminmod` 按当前密钥再生成管理模组；`/itemban adminmod regen` 热更换密钥并立即失效旧模组
+- `/itemban reload` 会热重载 `admin-key.json` 中的密钥与哈希
+- 客户端可同时安装多个管理模组，进不同服时自动匹配对应密钥
+
+### Changed
+- 游戏内管理界面需要客户端也安装 ItemBan 本体 + 该服管理模组；封禁清理逻辑仍可只装服务端
+- 网页管理默认只监听 `127.0.0.1`；远程访问需在 `config.json` 设置 `"webBind": "0.0.0.0"`
+
+### Fixed
+- 管理模组 HMAC 核对改为恒定时间比较；玩家断线后立即清除游戏内管理会话
+- 网页 `user` 不能再改自动踢出；NBT/ID 长度设上限；POSIX 上收紧 `admin-key.json` 权限
+
 ## [2.1.0] - 2026-09-10
 
 ### Added

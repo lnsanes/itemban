@@ -21,6 +21,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.event.TickEvent;
@@ -102,12 +103,23 @@ public class ItemBanHandler {
         if (scanExecutor == null || scanExecutor.isShutdown()) {
             scanExecutor = newScanExecutor();
         }
+        AdminSessions.clear();
+        AdminKeyManager.onServerStarting();
         WebAdminServer.start(event.getServer());
+    }
+
+
+    @SubscribeEvent
+    public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            AdminNetwork.onPlayerLeave(player.getUUID());
+        }
     }
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         WebAdminServer.stop();
+        AdminSessions.clear();
         scanStates.clear();
         ExecutorService executor = scanExecutor;
         if (executor != null) {
@@ -863,7 +875,7 @@ public class ItemBanHandler {
                 nbtInfo = " " + nbtStr;
             }
 
-            String message = String.format("§c[ItemBan] §f玩家 §e%s §f因破坏违禁方块 §c%s%s §f已被系统清除！ §7[世界方块 | %s]",
+            String message = String.format("§c[ItemBan] §f玩家 §e%s §f因放置违禁方块 §c%s%s §f已被系统清除！ §7[世界方块 | %s]",
                 player.getName().getString(), blockId, nbtInfo, loc);
 
             if (player.level().getServer() != null) {
@@ -875,7 +887,7 @@ public class ItemBanHandler {
         // 自动封禁功能（与 LnsanesBan 共存时走 BanHelper，避免 /ban 命令被劫持后静默失败）
         if (ConfigHandler.autoBanOnViolation && !ConfigHandler.isExcludedFromLog(blockId) && player instanceof ServerPlayer serverPlayer) {
             if (serverPlayer.level().getServer() != null) {
-                String banReason = String.format("你因破坏违禁方块（%s）已被永久封禁 如需申诉 请联系服务器管理员。", blockId);
+                String banReason = String.format("你因放置违禁方块（%s）已被永久封禁 如需申诉 请联系服务器管理员。", blockId);
                 BanHelper.banAndKick(serverPlayer, banReason);
             }
         }

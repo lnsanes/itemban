@@ -11,6 +11,10 @@ group = 'com.itemban'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
+// Forge scans every classpath dir that has mods.toml. Keep classes +
+// resources in one folder so runClient does not treat resources as a broken mod.
+sourceSets.main.output.resourcesDir = file("${layout.buildDirectory.get()}/classes/java/main")
+
 minecraft {
     mappings channel: 'official', version: minecraft_version
 

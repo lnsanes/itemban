@@ -13,10 +13,12 @@ public class ItemBan {
 
     public ItemBan(IEventBus modEventBus) {
         modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(AdminNetwork::registerPayloads);
         ConfigHandler.register();
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
+        AdminNetwork.register();
         LOGGER.info("ItemBan (NeoForge) initialized");
     }
 }

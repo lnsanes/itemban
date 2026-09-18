@@ -41,6 +41,7 @@ runs {
     }
     client {
         workingDirectory project.file('run/client')
+        programArguments.addAll '--username', 'lnsanes', '--quickPlayMultiplayer', '127.0.0.1:25570'
     }
     server {
         workingDirectory project.file('run/server')

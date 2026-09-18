@@ -45,6 +45,7 @@ public class ConfigHandler {
 
     public static boolean webEnabled = true;
     public static int webPort = 25580;
+    public static String webBind = "127.0.0.1";
     public static final String WEB_ADMIN = "admin";
     public static final String WEB_ROLE_OWNER = "owner";
     public static final String WEB_ROLE_USER = "user";
@@ -92,7 +93,9 @@ public class ConfigHandler {
         for (BlacklistRule rule : blacklistRules) {
             rule.parsedNbt = null;
             try {
-                if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                if (rule.nbtString != null && !rule.nbtString.isEmpty() && rule.nbtString.length() > 8192) {
+                    ItemBan.LOGGER.warn("跳过过长 NBT 规则: {}", rule.id);
+                } else if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
                     rule.parsedNbt = net.minecraft.nbt.TagParser.parseCompoundFully(rule.nbtString);
                 }
             } catch (Exception ignored) {}
@@ -100,7 +103,9 @@ public class ConfigHandler {
         for (BlacklistRule rule : blockBlacklistRules) {
             rule.parsedNbt = null;
             try {
-                if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
+                if (rule.nbtString != null && !rule.nbtString.isEmpty() && rule.nbtString.length() > 8192) {
+                    ItemBan.LOGGER.warn("跳过过长 NBT 规则: {}", rule.id);
+                } else if (rule.nbtString != null && !rule.nbtString.isEmpty()) {
                     rule.parsedNbt = net.minecraft.nbt.TagParser.parseCompoundFully(rule.nbtString);
                 }
             } catch (Exception ignored) {}
@@ -149,7 +154,15 @@ public class ConfigHandler {
                     if (config.containsKey("detectDroppedItems")) detectDroppedItems = (Boolean) config.get("detectDroppedItems");
                     if (config.containsKey("detectWorldBlocks")) detectWorldBlocks = (Boolean) config.get("detectWorldBlocks");
                     if (config.containsKey("webEnabled")) webEnabled = (Boolean) config.get("webEnabled");
-                    if (config.containsKey("webPort") && config.get("webPort") instanceof Number) webPort = ((Number) config.get("webPort")).intValue();
+                    if (config.containsKey("webPort") && config.get("webPort") instanceof Number) {
+                        int port = ((Number) config.get("webPort")).intValue();
+                        if (port >= 1 && port <= 65535) {
+                            webPort = port;
+                        }
+                    }
+                    if (config.containsKey("webBind")) {
+                        webBind = sanitizeWebBind(mapStr(config.get("webBind")));
+                    }
                     applyWebAuthFromConfig(config);
 
                     Object listObj = config.get("excludeFromLog");
@@ -172,6 +185,7 @@ public class ConfigHandler {
             config.put("detectWorldBlocks", detectWorldBlocks);
             config.put("webEnabled", webEnabled);
             config.put("webPort", webPort);
+            config.put("webBind", webBind);
             config.put("webAccounts", webAccountsForSave());
             config.put("excludeFromLog", new ArrayList<>(excludeFromLog));
             Files.writeString(CONFIG_FILE, GSON.toJson(config));
@@ -185,8 +199,17 @@ public class ConfigHandler {
     public static void setDetectDroppedItems(boolean v) { detectDroppedItems = v; saveConfig(); }
     public static void setDetectWorldBlocks(boolean v) { detectWorldBlocks = v; saveConfig(); }
 
-    public static void addExcludeFromLog(String id) { excludeFromLog.add(id); saveConfig(); }
-    public static void removeExcludeFromLog(String id) { excludeFromLog.remove(id); saveConfig(); }
+    public static void addExcludeFromLog(String id) {
+        String resolved = ItemNames.resolveId(id, false);
+        if (resolved == null || resolved.isEmpty()) { return; }
+        excludeFromLog.add(resolved);
+        saveConfig();
+    }
+    public static void removeExcludeFromLog(String id) {
+        excludeFromLog.remove(id);
+        excludeFromLog.remove(ItemNames.resolveId(id, false));
+        saveConfig();
+    }
     public static Set<String> getExcludeFromLog() { return Collections.unmodifiableSet(excludeFromLog); }
     public static boolean isExcludedFromLog(String id) { return excludeFromLog.contains(id); }
 
@@ -278,13 +301,86 @@ public class ConfigHandler {
         }
     }
 
+
+    public static Map<String, Object> adminGuiState() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("publicAnnounce", publicAnnounce);
+        out.put("autoBanOnViolation", autoBanOnViolation);
+        out.put("detectDroppedItems", detectDroppedItems);
+        out.put("detectWorldBlocks", detectWorldBlocks);
+        out.put("items", namedRules(itemRulesSnapshot));
+        out.put("blocks", namedRules(blockRulesSnapshot));
+        java.util.List<java.util.Map<String, String>> excludes = new java.util.ArrayList<>();
+        for (String id : excludeFromLog) {
+            java.util.Map<String, String> row = new LinkedHashMap<>();
+            row.put("id", id);
+            row.put("name", ItemNames.nameOf(id));
+            row.put("nbt", "");
+            excludes.add(row);
+        }
+        out.put("excludes", excludes);
+        out.put("keyId", AdminKeyManager.keyId());
+        return out;
+    }
+
+    private static java.util.List<java.util.Map<String, String>> namedRules(java.util.List<BlacklistRule> rules) {
+        java.util.List<java.util.Map<String, String>> out = new java.util.ArrayList<>();
+        if (rules == null) {
+            return out;
+        }
+        for (BlacklistRule rule : rules) {
+            java.util.Map<String, String> row = new LinkedHashMap<>();
+            row.put("id", rule.id == null ? "" : rule.id);
+            row.put("name", ItemNames.nameOf(rule.id));
+            row.put("nbt", rule.nbtString == null ? "" : rule.nbtString);
+            out.add(row);
+        }
+        return out;
+    }
+
     public static List<BlacklistRule> getBlacklistRules() { return itemRulesSnapshot; }
     public static List<BlacklistRule> getBlockBlacklistRules() { return blockRulesSnapshot; }
 
+    public static String nbtError(String nbtString) {
+        if (nbtString == null || nbtString.trim().isEmpty()) {
+            return null;
+        }
+        String nbt = nbtString.trim();
+        if (nbt.length() > 8192) {
+            return "NBT 过长";
+        }
+        if (!nbt.startsWith("{")) {
+            nbt = "{" + nbt + "}";
+        }
+        try {
+            net.minecraft.nbt.TagParser.parseCompoundFully(nbt.trim());
+            return null;
+        } catch (Exception e) {
+            return "NBT 格式无效";
+        }
+    }
+
+    public static String validateNewRule(String itemId, String nbtString, boolean preferBlock) {
+        if (itemId == null || itemId.trim().isEmpty()) {
+            return "ID 不能为空";
+        }
+        if (itemId.length() > 256) {
+            return "ID 过长";
+        }
+        String resolved = ItemNames.resolveId(itemId, preferBlock);
+        if (resolved == null || resolved.isEmpty()) {
+            return "找不到该物品/方块 ID";
+        }
+        return nbtError(nbtString);
+    }
+
     public static void addToBlacklist(String id) { addToBlacklist(id, null); }
     public static void addToBlacklist(String id, String nbtString) {
+        if (validateNewRule(id, nbtString, false) != null) {
+            return;
+        }
         BlacklistRule r = new BlacklistRule();
-        r.id = id;
+        r.id = ItemNames.resolveId(id, false);
         r.nbtString = nbtString;
         blacklistRules.add(r);
         saveBlacklist();
@@ -293,16 +389,20 @@ public class ConfigHandler {
 
     public static void removeFromBlacklist(String id) { removeFromBlacklist(id, null); }
     public static void removeFromBlacklist(String id, String nbtString) {
-        if (nbtString == null || nbtString.isEmpty()) blacklistRules.removeIf(r -> r.matchesId(id));
-        else blacklistRules.removeIf(r -> r.equalsRule(id, nbtString));
+        String resolved = ItemNames.resolveId(id, false);
+        if (nbtString == null || nbtString.isEmpty()) blacklistRules.removeIf(r -> r.matchesId(id) || r.matchesId(resolved));
+        else blacklistRules.removeIf(r -> r.equalsRule(id, nbtString) || r.equalsRule(resolved, nbtString));
         saveBlacklist();
         rebuildIndexes();
     }
 
     public static void addToBlockBlacklist(String id) { addToBlockBlacklist(id, null); }
     public static void addToBlockBlacklist(String id, String nbtString) {
+        if (validateNewRule(id, nbtString, true) != null) {
+            return;
+        }
         BlacklistRule r = new BlacklistRule();
-        r.id = id;
+        r.id = ItemNames.resolveId(id, true);
         r.nbtString = nbtString;
         blockBlacklistRules.add(r);
         saveBlockBlacklist();
@@ -311,8 +411,9 @@ public class ConfigHandler {
 
     public static void removeFromBlockBlacklist(String id) { removeFromBlockBlacklist(id, null); }
     public static void removeFromBlockBlacklist(String id, String nbtString) {
-        if (nbtString == null || nbtString.isEmpty()) blockBlacklistRules.removeIf(r -> r.matchesId(id));
-        else blockBlacklistRules.removeIf(r -> r.equalsRule(id, nbtString));
+        String resolved = ItemNames.resolveId(id, true);
+        if (nbtString == null || nbtString.isEmpty()) blockBlacklistRules.removeIf(r -> r.matchesId(id) || r.matchesId(resolved));
+        else blockBlacklistRules.removeIf(r -> r.equalsRule(id, nbtString) || r.equalsRule(resolved, nbtString));
         saveBlockBlacklist();
         rebuildIndexes();
     }
@@ -477,7 +578,7 @@ public class ConfigHandler {
         ensureWebCredentials();
         StringBuilder sb = new StringBuilder();
         sb.append("§aItemBan 网页管理\n");
-        sb.append("§f地址: http://<服务器IP>:").append(webPort).append("\n");
+        sb.append("§f地址: http://").append(webBind).append(":").append(webPort).append("\n");
         sb.append("§f系统账号: ").append(WEB_ADMIN).append("（owner）\n");
         if (!hasPermanentPassword() && generatedWebPassword != null) {
             sb.append("§e一次性密码: ").append(generatedWebPassword).append("\n");
@@ -500,6 +601,43 @@ public class ConfigHandler {
         saveConfig();
         WebAdminServer.invalidateSessions();
         return null;
+    }
+
+
+    public static boolean isPublicWebBind() {
+        String bind = webBind == null ? "" : webBind.trim();
+        return bind.isEmpty() || "0.0.0.0".equals(bind) || "*".equals(bind) || "::".equals(bind);
+    }
+
+    static String sanitizeWebBind(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return "127.0.0.1";
+        }
+        String bind = raw.trim();
+        if ("localhost".equalsIgnoreCase(bind) || "127.0.0.1".equals(bind)) {
+            return "127.0.0.1";
+        }
+        if ("*".equals(bind) || "0.0.0.0".equals(bind) || "::".equals(bind)) {
+            return "0.0.0.0".equals(bind) || "*".equals(bind) ? "0.0.0.0" : bind;
+        }
+        if (bind.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
+            return bind;
+        }
+        if (bind.indexOf(':') >= 0 && bind.length() <= 45) {
+            boolean ok = true;
+            for (int i = 0; i < bind.length(); i++) {
+                char c = bind.charAt(i);
+                if (!(c == ':' || c == '.' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                return bind;
+            }
+        }
+        ItemBan.LOGGER.warn("非法 webBind 值 '{}'，已回退到 127.0.0.1", bind);
+        return "127.0.0.1";
     }
 
     public static class WebLoginResult {

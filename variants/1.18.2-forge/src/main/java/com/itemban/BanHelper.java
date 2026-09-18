@@ -39,7 +39,7 @@ public final class BanHelper {
 
         String banReason = reason == null || reason.isBlank()
                 ? "Banned by ItemBan."
-                : reason;
+                : reason.replace('\n', ' ').replace('\r', ' ');
 
         // 先落盘当前背包（调用方应已清空违禁物），再封禁/踢出
         try {

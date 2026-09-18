@@ -26,6 +26,13 @@ public final class ItemNames {
 
     private ItemNames() {}
 
+    public static void ensureLoaded() {
+        if (!ZH.isEmpty()) {
+            return;
+        }
+        loadStream(ItemNames.class.getResourceAsStream("/assets/itemban/lang/zh_cn_vanilla.json"));
+    }
+
     public static void load(MinecraftServer server) {
         ZH.clear();
         loadStream(ItemNames.class.getResourceAsStream("/assets/itemban/lang/zh_cn_vanilla.json"));
@@ -59,6 +66,7 @@ public final class ItemNames {
     }
 
     public static String translateKey(String key, String fallback) {
+        ensureLoaded();
         if (key == null || key.isEmpty()) {
             return fallback;
         }
@@ -130,4 +138,92 @@ public final class ItemNames {
         }
         return out;
     }
+
+    public static String resolveId(String raw, boolean preferBlock) {
+        ensureLoaded();
+        if (raw == null) {
+            return "";
+        }
+        String id = raw.trim();
+        if (id.isEmpty()) {
+            return id;
+        }
+        String asRegistry = asRegistryId(id);
+        if (asRegistry != null) {
+            return asRegistry;
+        }
+        String blockId = findByDisplayName(listBlocks(), id);
+        String itemId = findByDisplayName(listItems(), id);
+        if (preferBlock) {
+            if (blockId != null) {
+                return blockId;
+            }
+            if (itemId != null) {
+                return itemId;
+            }
+        } else if (itemId != null) {
+            return itemId;
+        } else if (blockId != null) {
+            return blockId;
+        }
+        return "";
+    }
+
+    private static String asRegistryId(String id) {
+        String candidate = id;
+        if (id.indexOf(':') < 0) {
+            if (!isRegistryToken(id)) {
+                return null;
+            }
+            candidate = "minecraft:" + id;
+        } else if (!isRegistryToken(id)) {
+            return null;
+        }
+        if (containsId(listItems(), candidate) || containsId(listBlocks(), candidate)) {
+            return candidate;
+        }
+        return null;
+    }
+
+    private static boolean isRegistryToken(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '_' || c == ':' || c == '/' || c == '.' || c == '-') {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean containsId(java.util.List<java.util.Map<String, String>> rows, String id) {
+        for (java.util.Map<String, String> row : rows) {
+            if (id.equalsIgnoreCase(row.get("id"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String findByDisplayName(java.util.List<java.util.Map<String, String>> rows, String name) {
+        String minecraft = null;
+        String other = null;
+        for (java.util.Map<String, String> row : rows) {
+            String rowName = row.get("name");
+            if (rowName == null || !name.equals(rowName.trim())) {
+                continue;
+            }
+            String rid = row.get("id");
+            if (rid != null && rid.startsWith("minecraft:")) {
+                if (minecraft == null) {
+                    minecraft = rid;
+                }
+            } else if (other == null) {
+                other = rid;
+            }
+        }
+        return minecraft != null ? minecraft : other;
+    }
+
 }

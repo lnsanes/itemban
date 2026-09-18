@@ -7,9 +7,11 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import net.minecraft.server.MinecraftServer;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -87,7 +89,8 @@ public final class WebAdminServer {
         }
         try {
             ConfigHandler.ensureWebCredentials();
-            HttpServer started = HttpServer.create(new InetSocketAddress(ConfigHandler.webPort), 0);
+            InetSocketAddress addr = listenAddress();
+            HttpServer started = HttpServer.create(addr, 0);
             started.createContext("/", WebAdminServer::handleRoot);
             started.createContext("/api/login", WebAdminServer::handleLogin);
             started.createContext("/api/logout", WebAdminServer::handleLogout);
@@ -115,8 +118,12 @@ public final class WebAdminServer {
             started.start();
             httpPool = pool;
             http = started;
-            ItemBan.LOGGER.info("ItemBan 网页管理已启动: http://0.0.0.0:{}  （账号密码登录，一次性初始密码，权限节点 {}）",
-                    ConfigHandler.webPort, BanPermission.NODE_NAME);
+            ItemBan.LOGGER.info("ItemBan 网页管理已启动: http://{}:{}  （账号密码登录，一次性初始密码，权限节点 {}）",
+                    addr.getHostString(), ConfigHandler.webPort, BanPermission.NODE_NAME);
+            if (ConfigHandler.isPublicWebBind()) {
+                ItemBan.LOGGER.warn("网页管理正在监听所有网卡（webBind={}）。公网暴露有风险，建议改为 127.0.0.1 或仅内网地址。",
+                        ConfigHandler.webBind);
+            }
         } catch (Exception e) {
             ItemBan.LOGGER.error("启动 ItemBan 网页管理失败", e);
         }
@@ -164,7 +171,7 @@ public final class WebAdminServer {
                 return;
             }
             String nonce = newSessionToken();
-            String html = new String(in.readAllBytes(), StandardCharsets.UTF_8)
+            String html = new String(readAll(in), StandardCharsets.UTF_8)
                     .replace("{{CSP_NONCE}}", nonce)
                     .replace("{{SETUP_HINT_HIDDEN}}", ConfigHandler.hasPermanentWebPassword() ? " hidden" : "");
             byte[] body = html.getBytes(StandardCharsets.UTF_8);
@@ -520,7 +527,7 @@ public final class WebAdminServer {
     private static Map<String, Object> addBlock(Map<String, Object> body) {
         String id = str(body.get("id"));
         String nbt = str(body.get("nbt"));
-        String error = validateRuleInput(id, nbt);
+        String error = validateRuleInput(id, nbt, true);
         if (error != null) {
             return mapOf("ok", false, "error", error);
         }
@@ -553,6 +560,10 @@ public final class WebAdminServer {
             ConfigHandler.setPublicAnnounce(bool(body.get("publicAnnounce")));
         }
         if (body.containsKey("autoBanOnViolation")) {
+            Session me = CURRENT.get();
+            if (me == null || !ConfigHandler.canManageAccounts(me.username, me.role)) {
+                return mapOf("ok", false, "error", "只有 admin 或 owner 可以修改自动踢出");
+            }
             ConfigHandler.setAutoBanOnViolation(bool(body.get("autoBanOnViolation")));
         }
         if (body.containsKey("detectDroppedItems")) {
@@ -580,7 +591,34 @@ public final class WebAdminServer {
         String text = "";
         try {
             if (Files.exists(file)) {
-                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                long size = Files.size(file);
+                String chunk;
+                if (size > 1048576L) {
+                    java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file.toFile(), "r");
+                    try {
+                        long start = size - 1048576L;
+                        raf.seek(start);
+                        byte[] buf = new byte[1048576];
+                        raf.readFully(buf);
+                        chunk = new String(buf, StandardCharsets.UTF_8);
+                        int nl = chunk.indexOf('\n');
+                        if (nl >= 0 && nl + 1 < chunk.length()) {
+                            chunk = chunk.substring(nl + 1);
+                        }
+                    } finally {
+                        raf.close();
+                    }
+                } else if (size <= 0L) {
+                    chunk = "";
+                } else {
+                    byte[] all = Files.readAllBytes(file);
+                    chunk = new String(all, StandardCharsets.UTF_8);
+                }
+                List<String> lines = new ArrayList<String>();
+                String[] parts = chunk.split("\n", -1);
+                for (int i = 0; i < parts.length; i++) {
+                    lines.add(parts[i]);
+                }
                 int from = Math.max(0, lines.size() - 300);
                 text = String.join("\n", lines.subList(from, lines.size()));
             }
@@ -641,6 +679,10 @@ public final class WebAdminServer {
     }
 
     private static String validateRuleInput(String id, String nbt) {
+        return validateRuleInput(id, nbt, false);
+    }
+
+    private static String validateRuleInput(String id, String nbt, boolean preferBlock) {
         if (id == null || id.isEmpty()) {
             return "ID 不能为空";
         }
@@ -650,7 +692,7 @@ public final class WebAdminServer {
         if (nbt != null && nbt.length() > MAX_NBT_CHARS) {
             return "NBT 过长";
         }
-        return null;
+        return ConfigHandler.validateNewRule(id, nbt, preferBlock);
     }
 
     private static byte[] readAtMost(java.io.InputStream in, int max) throws IOException {
@@ -664,6 +706,19 @@ public final class WebAdminServer {
             out.write(buf, 0, n);
         }
         return out.toByteArray();
+    }
+
+
+    private static InetSocketAddress listenAddress() throws java.net.UnknownHostException {
+        int port = ConfigHandler.webPort;
+        String bind = ConfigHandler.webBind;
+        if (bind == null || bind.trim().isEmpty() || "127.0.0.1".equals(bind) || "localhost".equalsIgnoreCase(bind)) {
+            return new InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), port);
+        }
+        if ("0.0.0.0".equals(bind) || "*".equals(bind) || "::".equals(bind)) {
+            return new InetSocketAddress(port);
+        }
+        return new InetSocketAddress(java.net.InetAddress.getByName(bind), port);
     }
 
     private static boolean exactPath(HttpExchange ex, String expected) {
@@ -734,6 +789,16 @@ public final class WebAdminServer {
             m.put(String.valueOf(kv[i]), kv[i + 1]);
         }
         return m;
+    }
+
+    private static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        byte[] chunk = new byte[4096];
+        int n;
+        while ((n = in.read(chunk)) >= 0) {
+            buf.write(chunk, 0, n);
+        }
+        return buf.toByteArray();
     }
 
     private static <T> T callOnServer(java.util.function.Supplier<T> task) {

@@ -17,12 +17,12 @@ public class ItemBan {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
         modEventBus.addListener(this::commonSetup);
         MinecraftForge.EVENT_BUS.register(this);
-        // Register config, commands, events in other classes
         ConfigHandler.register();
         MinecraftForge.EVENT_BUS.register(new ItemBanHandler());
     }
 
     private void commonSetup(final FMLCommonSetupEvent event) {
         LOGGER.info("ItemBan mod initialized for 1.20.1");
+        AdminNetwork.register();
     }
 }
